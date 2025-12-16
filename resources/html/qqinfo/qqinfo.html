@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QQ用户信息卡片</title>
+    <!-- <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"> -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #1a2a6c, #b21f1f, #1a2a6c);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .card {
+            width: 100%;
+            max-width: 900px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-10px);
+        }
+
+        .card-header {
+            background: linear-gradient(to right, #0084ff, #00c6ff);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            position: relative;
+        }
+
+        .card-title {
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .card-subtitle {
+            font-size: 16px;
+            opacity: 0.9;
+            font-weight: bold;
+        }
+
+        .card-body {
+            display: flex;
+            padding: 30px;
+        }
+
+        .avatar-container {
+            flex: 0 0 120px;
+            margin-right: 25px;
+            position: relative;
+        }
+
+        .avatar {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: 5px solid #e0f0ff;
+            box-shadow: 0 5px 15px rgba(0, 132, 255, 0.3);
+            background: #f8f9fa;
+            overflow: hidden;
+        }
+
+        .avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .status-badge {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            width: 24px;
+            height: 24px;
+            background: #4ade80;
+            border-radius: 50%;
+            border: 3px solid white;
+        }
+
+        .info-container {
+            flex: 1;
+        }
+
+        .info-row {
+            display: flex;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px dashed #e0e0e0;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .info-label {
+            flex: 0 0 160px;
+            font-weight: 600;
+            color: #0084ff;
+            font-size: 17px;
+        }
+
+        .info-value {
+            flex: 1;
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 5px;
+        }
+
+        .badge-level {
+            background: linear-gradient(to right, #ff9a9e, #fad0c4);
+            color: #fff;
+        }
+
+        .badge-vip {
+            background: linear-gradient(to right, #ff758c, #ff7eb3);
+            color: #fff;
+        }
+
+        .badge-gender-male {
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            color: #fff;
+        }
+
+        .badge-gender-female {
+            background: linear-gradient(to right, #ff9a9e, #fad0c4);
+            color: #fff;
+        }
+
+        .signature {
+            font-style: italic;
+            color: #666;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-top: 15px;
+            border-left: 4px solid #0084ff;
+            font-weight: bold;
+        }
+
+        .card-footer {
+            background: #f5f7fa;
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: #0084ff;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .qq-logo {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            font-size: 24px;
+            color: white;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        @media (max-width: 480px) {
+            .card-body {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .avatar-container {
+                margin-right: 0;
+                margin-bottom: 20px;
+            }
+
+            .info-container {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div class="card-header">
+            <div class="qq-logo">
+                <i class="fab fa-qq"></i>
+            </div>
+            <h1 class="card-title">{{cardTitle}}</h1>
+            <div class="card-subtitle">Ciallo~(∠・ω< )⌒★</div>
+            </div>
+
+            <div class="card-body">
+                <div class="avatar-container">
+                    <div class="avatar">
+                        <img src="{{headimg}}" alt="QQ头像">
+                    </div>
+                </div>
+
+                <div class="info-container">
+                    <div class="info-row">
+                        <div class="info-label">昵称</div>
+                        <div class="info-value">{{name}}</div>
+                    </div>
+
+                    <div class="info-row">
+                        <div class="info-label">QQ号</div>
+                        <div class="info-value">{{qq}}</div>
+                    </div>
+
+                    <div class="info-row">
+                        <div class="info-label">等级</div>
+                        <div class="info-value">
+                            {{if iVip != '未开通'}}
+                            <span class="badge badge-level">VIP{{iVipLevel}}</span>
+                            {{/if}}
+                            {{if iSVip != '未开通'}}
+                            <span class="badge badge-vip">SVIP</span>
+                            {{/if}}
+                            {{if NVip != '未开通'}}
+                            <span class="badge badge-vip">年费会员</span>
+                            {{/if}}
+                            <span class="badge badge-level">{{icon}} (Lv.{{level}})</span>
+                        </div>
+                    </div>
+
+                    <div class="info-row">
+                        <div class="info-label">Q龄</div>
+                        <div class="info-value">{{RegTimeLength}}</div>
+                    </div>
+
+                    <!-- <div class="info-row">
+                        <div class="info-label">地区</div>
+                        <div class="info-value">{{ip_city}}</div>
+                    </div> -->
+
+                    <div class="info-row">
+                        <div class="info-label">头像最后修改时间</div>
+                        <div class="info-value">{{sFaceTime}}</div>
+                    </div>
+
+                    <div class="info-row">
+                        <div class="info-label">注册时间</div>
+                        <div class="info-value">{{RegistrationTime}}</div>
+                    </div>
+
+                    <!-- <div class="info-row">
+                        <div class="info-label">机型</div>
+                        <div class="info-value">{{device}}</div>
+                    </div>
+
+                    <div class="info-row">
+                        <div class="info-label">帐号状态</div>
+                        <div class="info-value">{{status}}</div>
+                    </div> -->
+
+                    <div class="signature">
+                        <i class="fas fa-quote-left"></i> {{sign}} <i class="fas fa-quote-right"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card-footer">
+                <div class="stat-item">
+                    <div class="stat-value">{{like}}</div>
+                    <div class="stat-label">点赞量</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">{{iTotalActiveDay}}</div>
+                    <div class="stat-label">活跃天数</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">{{iNextLevelDay}}</div>
+                    <div class="stat-label">升级需天数</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">{{sSVipExpireTime}}</div>
+                    <div class="stat-label">SVIP到期</div>
+                </div>
+            </div>
+        </div>
+</body>
+
+</html>

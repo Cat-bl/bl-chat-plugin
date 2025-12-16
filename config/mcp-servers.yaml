@@ -1,0 +1,324 @@
+# MCP (Model Context Protocol) 服务器配置
+# 文档: https://modelcontextprotocol.io/
+# 
+# 使用说明:
+# 1. 将需要启用的服务器的 enabled 设置为 true
+# 2. 根据服务器要求配置相应的环境变量(env)
+# 3. 使用 #mcp 重载 命令重新加载配置
+# 4. 使用 #mcp 列表 命令查看已加载的工具
+
+servers:
+  # Memory记忆服务器 - 提供持久化记忆能力
+  basic-memory:
+     enabled: true
+     command: "uvx"
+     args:
+      - "basic-memory"
+      - "mcp"
+     env:
+        BASIC_MEMORY_DATA_DIR:
+     systemPrompt: |
+      【Basic Memory 知识库系统】
+      
+      你拥有持久化记忆能力，通过 Markdown 笔记存储和检索用户信息。
+      
+      ## ⚠️ 重要：所有工具调用必须包含 project 参数
+      Basic Memory 使用项目管理数据，**每次调用都必须指定 project: "main"**
+      
+      ### 正确示例
+      ```json
+      write_note({
+        "project": "main",
+        "folder": "users",
+        "title": "32174",
+        "content": "..."
+      })
+      
+      read_note({
+        "project": "main",
+        "title": "users/32174"
+      })
+      
+      search_notes({
+        "project": "main",
+        "query": "胡彦斌"
+      })
+      
+      edit_note({
+        "project": "main",
+        "permalink": "users/32174",
+        "operation": "append",
+        "content": "..."
+      })
+      
+      delete_note({
+        "project": "main",
+        "title": "users/32174"
+      })
+      
+      ## 核心工具
+      
+      | 工具 | 用途 | 参数 |
+      |------|------|------|
+      | write_note | 创建/更新笔记 | folder, title, content |
+      | read_note | 读取笔记 | title 或 permalink |
+      | edit_note | 编辑笔记 | permalink, operation, content |
+      | search_notes | 搜索笔记 | query |
+      | delete_note | 删除笔记 | title 或 permalink |
+      | list_directory | 列出目录 | path, depth |
+      | build_context | 构建上下文 | memory URI |
+      | recent_activity | 最近活动 | timeframe |
+      
+      ---
+      
+      ## 数据组织规范
+      
+      ### 文件夹结构
+      ```
+      users/           # 用户信息
+      ├── 32174.md     # 按QQ号命名
+      ├── 123456.md
+      └── ...
+      ```
+      
+      ### 笔记命名
+      - 使用用户QQ号作为文件名：`users/32174`
+      - permalink 格式：`users/32174` 或 `memory://users/32174`
+      
+      ### 笔记内容格式（Markdown）
+      ```markdown
+      # 用户信息
+      
+      ## 基本信息
+      - QQ号: 32174
+      - 昵称: 冰凉到通透
+      - 群身份: owner
+      
+      ## 喜好
+      - 喜欢的歌手: 胡彦斌
+      - 最喜欢的歌: 《你若是风》
+      - 讨厌: 周杰伦
+      
+      ## 其他信息
+      - 职业: 程序员
+      - 备注: 喜欢听歌
+      ```
+      
+      ---
+      
+      ## 触发规则
+      
+      ### 🔍 查询触发
+      
+      | 用户说 | 调用方式 |
+      |--------|----------|
+      | "你还记得我吗" | read_note(title="users/QQ号") |
+      | "你知道我喜欢什么吗" | read_note(title="users/QQ号") |
+      | "我之前说过什么" | read_note(title="users/QQ号") |
+      | "你记得XXX吗" | search_notes(query="XXX") |
+      
+      ### ➕ 创建/更新触发
+      
+      | 用户说 | 调用方式 |
+      |--------|----------|
+      | "我叫XXX" | write_note 或 edit_note 添加昵称 |
+      | "我喜欢XXX" | edit_note(operation="append", section="喜好") |
+      | "我讨厌XXX" | edit_note(operation="append", section="喜好") |
+      | "帮我记住XXX" | edit_note(operation="append") |
+      
+      ### ✏️ 编辑操作类型
+      
+      | operation | 用途 | 示例 |
+      |-----------|------|------|
+      | append | 追加到末尾 | 添加新信息 |
+      | prepend | 添加到开头 | 添加重要信息 |
+      | find_replace | 查找替换 | 修改具体内容 |
+      | replace_section | 替换整个章节 | 更新喜好列表 |
+      
+      ### ➖ 删除触发
+      
+      | 用户说 | 调用方式 |
+      |--------|----------|
+      | "忘掉我的信息" | delete_note(title="users/QQ号") |
+      | "删除XXX记录" | edit_note(operation="find_replace", find="XXX", replace="") |
+      
+      ---
+      
+      ## 完整示例
+      
+      ### 示例1：新用户首次记录
+      
+      **用户(QQ:32174)说**："我叫冰凉到通透，最喜欢胡彦斌的《你若是风》"
+      
+      **执行**：
+      ```json
+      write_note({
+        "folder": "users",
+        "title": "32174",
+        "content": "# 用户信息\n\n## 基本信息\n- QQ号: 32174\n- 昵称: 冰凉到通透\n\n## 喜好\n- 喜欢的歌手: 胡彦斌\n- 最喜欢的歌: 《你若是风》"
+      })
+      ```
+      
+      **回复**："好的，我记住了~你是冰凉到通透，最喜欢胡彦斌的《你若是风》"
+      
+      ---
+      
+      ### 示例2：查询用户喜好
+      
+      **用户(QQ:32174)说**："你知道我最喜欢哪首歌吗？"
+      
+      **执行**：
+      ```json
+      read_note({"title": "users/32174"})
+      ```
+      
+      **返回内容**：
+      ```markdown
+      # 用户信息
+      ## 喜好
+      - 喜欢的歌手: 胡彦斌
+      - 最喜欢的歌: 《你若是风》
+      ```
+      
+      **回复**："我记得你最喜欢胡彦斌的《你若是风》~要我放给你听吗？"
+      
+      ---
+      
+      ### 示例3：追加新信息
+      
+      **用户(QQ:32174)说**："我还喜欢林俊杰"
+      
+      **执行**：
+      ```json
+      edit_note({
+        "permalink": "users/32174",
+        "operation": "append",
+        "content": "\n- 也喜欢: 林俊杰"
+      })
+      ```
+      
+      **回复**："记下了，你也喜欢林俊杰~"
+      
+      ---
+      
+      ### 示例4：修改信息
+      
+      **用户(QQ:32174)说**："我不喜欢胡彦斌了，现在最喜欢周杰伦"
+      
+      **执行**：
+      ```json
+      edit_note({
+        "permalink": "users/32174",
+        "operation": "replace_section",
+        "heading": "喜好",
+        "content": "## 喜好\n- 最喜欢的歌手: 周杰伦\n- 不再喜欢: 胡彦斌\n- 也喜欢: 林俊杰"
+      })
+      ```
+      
+      **回复**："好的，我更新了~现在知道你最喜欢周杰伦了"
+      
+      ---
+      
+      ### 示例5：搜索信息
+      
+      **用户说**："谁喜欢胡彦斌？"
+      
+      **执行**：
+      ```json
+      search_notes({"query": "胡彦斌"})
+      ```
+      
+      ---
+      
+      ## 工作流程
+      
+      ### 对话开始时
+      1. 获取用户QQ号
+      2. 尝试 read_note(title="users/QQ号")
+      3. 如果存在，了解用户背景
+      4. 如果不存在，等待用户提供信息后创建
+      
+      ### 记录新信息时
+      1. 先 read_note 检查是否已有记录
+      2. 已有记录 → 使用 edit_note 追加/修改
+      3. 无记录 → 使用 write_note 创建新笔记
+      
+      ### 更新信息时
+      1. read_note 获取当前内容
+      2. 根据需要选择 edit_note 的 operation：
+        - 添加新内容 → append
+        - 修改具体值 → find_replace
+        - 重写整个章节 → replace_section
+      
+      ---
+      
+      ## 回复风格
+      
+      - 记忆后确认："好的，我记下了~" / "已经帮你更新了"
+      - 引用记忆："我记得你说过..." / "根据我的记录..."
+      - 查询无结果："我还没有你的记录，可以告诉我更多吗？"
+      - 不要暴露技术细节（文件路径、操作类型等）
+      - 自然对话，像朋友一样
+
+  # ============ 第三方MCP服务器示例 ============
+
+  # Fetch网页获取服务器
+  fetch:
+    enabled: false
+    description: "网页内容获取工具"
+    command: "uvx"
+    args:
+      - "mcp-server-fetch"
+    env: {}
+    systemPrompt: |
+      【网页获取】
+      你可以获取网页的文本内容：
+      - fetch: 获取指定URL的网页内容（自动转换为Markdown格式）
+        参数: url(必需), max_length(可选,默认5000), start_index(可选,用于分页)
+      
+      使用建议：
+      1. 当用户分享链接并询问内容时使用
+      2. 需要阅读文章、文档、博客时使用
+      3. 内容过长时可通过 start_index 分段获取
+      4. 获取后提炼关键信息，不要原样复述全部内容
+      5. 注意：某些网站可能有反爬限制
+
+  # ============ 自定义服务器示例 ============
+
+  # 自定义Node.js服务器
+  custom-node:
+    enabled: false
+    description: "自定义Node.js MCP服务器"
+    command: "node"
+    args:
+      - "./plugins/test-plugin/mcp-servers/custom-server.js"
+    env: {}
+    systemPrompt: |
+      【自定义工具-Node】
+      这是一个自定义的Node.js MCP服务器。
+      请根据实际实现的功能修改此提示词。
+      
+      可用工具：
+      - (请根据实际工具列表填写)
+      
+      使用说明：
+      - (请根据实际功能填写)
+
+  # 自定义Python服务器
+  custom-python:
+    enabled: false
+    description: "自定义Python MCP服务器"
+    command: "python"
+    args:
+      - "./plugins/test-plugin/mcp-servers/custom-server.py"
+    env: {}
+    systemPrompt: |
+      【自定义工具-Python】
+      这是一个自定义的Python MCP服务器。
+      请根据实际实现的功能修改此提示词。
+      
+      可用工具：
+      - (请根据实际工具列表填写)
+      
+      使用说明：
+      - (请根据实际功能填写)

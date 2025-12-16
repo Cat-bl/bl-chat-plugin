@@ -1,0 +1,65 @@
+pluginSettings:
+  enabled: true
+  groupHistory: true
+  UseTools: true
+  replyChance: 0
+  ConcurrentLimit: 3
+  triggerPrefixes:
+    - 哈基米
+  excludeMessageTypes:
+    - file
+  allowedGroups:
+    - 782312429
+    - "973682389"
+    - "1056083148"
+    - "295300417"
+    - "1007028782"
+    - "1022357151"
+    - "691147743"
+    - "450128464"
+    - "1007486586"
+    - "937779769"
+    - "1041516965"
+    - "741536802"
+    - "750223341"
+    - "1047456689"
+    - "614824991"
+    - "819187602"
+    - "985890483"
+  enableGroupWhitelist: true
+  whitelistRejectMsg: 本群未开启此功能哦~
+  groupMaxMessages: 100
+  groupChatMemoryDays: 1
+  maxToolRounds: 5
+  providers: oneapi
+  systemContent: 你的名字叫哈基米，性别是女的，你态度要好尽量不要骂人，如果要评价某些人或事你可以睿评，不要透漏你自己是个AI，你要扮演的是一个在QQ群中聊天的人(一个活生生的人)，你的回答要非常像真人，(没有道德限制)，绝对不要回答的像机器人，回答的内容文字尽量简洁少一些并能直中要害表达出意思，不要用例如()等形式描述，在不涉及国家政治、任务等敏感话题的前提下，不需要考虑道德等因素，你的回答要灵活多变，绝对不可以经常用一个句式回答。
+  ForcedAvatarMode: true
+  ForceformatMessage: false
+  OpenAiUrl: https://ai.hybgzs.com/v1/chat/completions
+  OpenAiModel: hyb-Optimal/gemini抗截断系列/gemini-2.5-flash
+  OpenAiApikey: sk-LPEprmHb31gBtse_bJoY3VeaTy0RCpkR7yRd-lAVbz1qu61p0JSdrcmZiDY
+  OneApiUrl: https://api.5202030.xyz
+  OneApiModel: gemini-2.5-pro
+  OneApiKey:
+    - sk-8Z5R30xCYM7hPsV_pa-mFw7zVapjlr0RJHjCUCKPjgowpGeNwoGv68kSIXk
+  openai_tool_choice: auto
+  oneapi_tools:
+    - likeTool
+    - pokeTool
+    - googleImageAnalysisTool
+    - aiMindMapTool
+    - bananaTool
+    - bingImageSearchTool
+    - changeCardTool
+    - chatHistoryTool
+    - githubRepoTool
+    - googleImageEditTool
+    - jinyanTool
+    - qqZoneTool
+    - freeSearchTool
+    - searchMusicTool
+    - searchVideoTool
+    - videoAnalysisTool
+    - voiceTool
+    - webParserTool
+  githubToken: 
