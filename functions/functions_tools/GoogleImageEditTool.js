@@ -95,8 +95,8 @@ export class GoogleImageEditTool extends AbstractTool {
             const history = [{ role: "user", content: imgurls }];
             try {
 
-                const apiUrl = 'https://api.lhyb.dpdns.org/v1/chat/completions'
-                const apiKey = 'sk-jDOxqRDt0iZKgi313OiyrGsZjQTo19Qkr6sYoVyy6pdrZ2US'
+                const apiUrl = 'https://api.kuai.host/v1/chat/completions'
+                const apiKey = 'sk-2BiyynWpQKN3lqAQR6xSIKSqAd0coVTg7ClrRJpxcqM3GR2f'
                 //  const apiKey = await this.getZaiKey() 
 
                 const requestData = {

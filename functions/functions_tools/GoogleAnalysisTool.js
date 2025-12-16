@@ -165,8 +165,8 @@ export class GoogleImageAnalysisTool extends AbstractTool {
             try {
 
 
-                const apiUrl = 'https://api.lhyb.dpdns.org/v1/chat/completions'
-                const apiKey = 'sk-jDOxqRDt0iZKgi313OiyrGsZjQTo19Qkr6sYoVyy6pdrZ2US'
+                const apiUrl = "https://api.bltcy.ai/v1/chat/completions"
+                const apiKey = 'sk-lppbA1igIMAnHfh0IKmbE8C4OkyGzPPt0ExyzcFcB9U43teS'
 
                 const requestData = {
                     model: "gemini-3-pro-preview",
