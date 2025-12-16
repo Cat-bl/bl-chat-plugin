@@ -26,7 +26,7 @@ export class SearchMusicTool extends AbstractTool {
     };
     this.musicCookies = {
       netease: '',
-      qqmusic: 'psrf_qqopenid=4D78EE58FC1A8D1C1F621690C44D911D;psrf_qqrefresh_token=D3B6F684B764E0288114AAFE767918F9;psrf_qqaccess_token=F08A2EDDC1DDA4842607EA98BDAE4854;uin=32174;qqmusic_key=Q_H_L_63k3N4pirHwy3qcO9J5RIgS-ZBxHK5eWSBfdunfEaESwbht1JRF-neWNurB1vxLlg3letuu2w_5-J07SL2LgtEwOvZK5Mw4Oiqd-syiBXbmg-q77vUHAjBrGYCi0WcegYHqVAbOcgACC-IqLQfc0;qm_keyst=Q_H_L_63k3N4pirHwy3qcO9J5RIgS-ZBxHK5eWSBfdunfEaESwbht1JRF-neWNurB1vxLlg3letuu2w_5-J07SL2LgtEwOvZK5Mw4Oiqd-syiBXbmg-q77vUHAjBrGYCi0WcegYHqVAbOcgACC-IqLQfc0;psrf_musickey_createtime=1765390220;psrf_qqunionid=E11E238E9F9A93C056CEAF798E2329D1;euin=oi-57iv*;login_type=1;tmeLoginType=2'
+      qqmusic: 'psrf_qqopenid=4D78EE58FC1A8D1C1F621690C44D911D;psrf_qqrefresh_token=D3B6F684B764E0288114AAFE767918F9;psrf_qqaccess_token=F08A2EDDC1DDA4842607EA98BDAE4854; uin=32174;qqmusic_key=Q_H_L_63k3Nq4NzLkblNqEVakMgPOx9G9gvUyT8YOjdCRgkBhaUJlhiet92jtEzJ2I0uIMUZWsmnmbiaK4n5pB-ecIGtDM48LCP-l-lwhF5nhy8n6ChOwIGmHhWQVP-jOvRBuusfhEpWbz9RoG8pMiT7Os;qm_keyst=Q_H_L_63k3Nq4NzLkblNqEVakMgPOx9G9gvUyT8YOjdCRgkBhaUJlhiet92jtEzJ2I0uIMUZWsmnmbiaK4n5pB-ecIGtDM48LCP-l-lwhF5nhy8n6ChOwIGmHhWQVP-jOvRBuusfhEpWbz9RoG8pMiT7Os;psrf_musickey_createtime=1765868272;psrf_qqunionid=E11E238E9F9A93C056CEAF798E2329D1; euin=oi-57iv*; login_type=1;tmeLoginType=2'
     };
     this.highQuality = true;
     this.randomPoolSize = 20; // 随机池大小
@@ -139,7 +139,7 @@ export class SearchMusicTool extends AbstractTool {
             }
           }
         };
-
+        // logger.error(JSON.stringify(body))
         const res = await this.postJson('https://u.y.qq.com/cgi-bin/musicu.fcg', body);
         const purl = res?.req_0?.data?.midurlinfo?.find(m => m.purl)?.purl;
         if (purl) playUrl = `http://ws.stream.qqmusic.qq.com/${purl}`;
@@ -168,7 +168,6 @@ export class SearchMusicTool extends AbstractTool {
           }
         }
       };
-
       const res = await this.postJson('https://u.y.qq.com/cgi-bin/musicu.fcg', body, {
         Cookie: Bot?.cookies?.['y.qq.com'] || this.musicCookies.qqmusic || ''
       });
@@ -206,8 +205,8 @@ export class SearchMusicTool extends AbstractTool {
         guid: md5(String(Bot?.uin || '000000') + 'music'),
         patch: "118",
         psrf_access_token_expiresAt: 0,
-        psrf_qqaccess_token: "",
-        psrf_qqopenid: "",
+        psrf_qqaccess_token: '',
+        psrf_qqopenid: '',
         psrf_qqunionid: ckMap.get('psrf_qqunionid') || '',
         tmeAppID: "qqmusic",
         tmeLoginType: 2,
