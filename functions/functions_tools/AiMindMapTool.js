@@ -5,6 +5,9 @@ import { createRequire } from 'module'
 const require = createRequire(import.meta.url);
 const puppeteer = require('puppeteer');
 const nodeVersion = process.version.slice(1).split('.')[0];
+import fs from "fs";
+import YAML from "yaml";
+import path from "path";
 
 /**
  * AI图表生成工具类，专注于生成Markmap格式的思维导图
@@ -86,6 +89,11 @@ export class AiMindMapTool extends AbstractTool {
       return '思维导图描述内容不能为空';
     }
 
+    // 配置路径
+    const configPath = path.join(process.cwd(), 'plugins/test-plugin/config/message.yaml');
+    const configFile = fs.readFileSync(configPath, 'utf8');
+    const config = YAML.parse(configFile).pluginSettings;
+
     try {
       // 构建消息历史
       const messages = [
@@ -98,11 +106,11 @@ export class AiMindMapTool extends AbstractTool {
           content: `请根据以下描述生成思维导图：${prompt}`
         }
       ];
-      const apiUrl = 'https://api.bltcy.ai/v1/chat/completions'
-      const apiKey = 'sk-lppbA1igIMAnHfh0IKmbE8C4OkyGzPPt0ExyzcFcB9U43teS'
+      const apiUrl = config.chatAiConfig?.chatApiUrl || 'https://api.openai.com/v1/chat/completions'
+      const apiKey = config.chatAiConfig?.chatApiKey || 'sk-xxxxxx'
 
       const requestData = {
-        model: "gemini-3-pro-preview",
+        model: config.chatAiConfig?.chatApiModel || 'gemini-3-pro-preview',
         messages: messages,
         stream: false,
       }

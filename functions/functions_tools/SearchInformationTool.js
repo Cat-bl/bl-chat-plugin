@@ -1,6 +1,8 @@
 import { AbstractTool } from './AbstractTool.js';
 import { TotalTokens } from "../../functions/tools/CalculateToken.js";
-
+import fs from "fs";
+import YAML from "yaml";
+import path from "path";
 /**
  * Search 工具类，用于自由搜索并控制返回结果的大小
  */
@@ -112,10 +114,15 @@ export class FreeSearchTool extends AbstractTool {
     }
 
     try {
-      const apiUrl = "https://api.bltcy.ai/v1/chat/completions"
-      const apiKey = 'sk-lppbA1igIMAnHfh0IKmbE8C4OkyGzPPt0ExyzcFcB9U43teS'
+      // 配置路径
+      const configPath = path.join(process.cwd(), 'plugins/test-plugin/config/message.yaml');
+      const configFile = fs.readFileSync(configPath, 'utf8');
+      const config = YAML.parse(configFile).pluginSettings;
+      
+      const apiUrl = config.searchAiConfig?.searchApiUrl || 'https://api.openai.com/v1/chat/completions'
+      const apiKey = config.searchAiConfig?.searchApiKey || 'sk-xxxxxx'
 
-      const requestData = { "model": "deepseek-r1-search", "messages": [{ "role": "user", "content": query }], "temperature": 1, "top_p": 0.1 }
+      const requestData = { "model": config.searchAiConfig?.searchApiModel || 'deepseek-r1-search', "messages": [{ "role": "user", "content": query }], "temperature": 1, "top_p": 0.1 }
 
       const response = await fetch(apiUrl, {
         method: "POST",

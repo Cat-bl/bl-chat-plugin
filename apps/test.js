@@ -36,18 +36,17 @@ const _path = process.cwd()
 
 // 表情包配置
 const EMOJI_CONFIG = {
-  enabled: true,                // 是否启用表情包回复功能（false时完全禁用）
-  baseProbability: 0.20,        // 基础触发概率（冷却结束后无惩罚时的基准概率）
-  cooldownTime: 30000,          // 冷却时间（毫秒），30秒内再次触发概率会衰减
-  maxProbability: 0.30,         // 概率上限（防止概率值无限增长）
-  minDelay: 500,                // 表情包发送的最小延迟（毫秒）
-  maxDelay: 500                 // 表情包发送的最大延迟（毫秒）
+  enabled: true,
+  baseProbability: 0.20,
+  cooldownTime: 30000,
+  maxProbability: 0.30,
+  minDelay: 500,
+  maxDelay: 500
 }
 
 const sessionStates = new Map()
 const roleMap = { owner: "owner", admin: "admin", member: "member" }
 
-// 模块级变量（文件加载时只执行一次）
 let pluginInitialized = false
 let sharedState = null
 
@@ -104,19 +103,16 @@ export class ExamplePlugin extends plugin {
       priority: 2000,
       rule: [
         { reg: "^#tool\\s*(.*)", fnc: "handleTool" },
-        { reg: "^#mcp\\s+重载", fnc: "reloadMCP" },  // 重载MCP
-        { reg: "^#mcp\\s+列表", fnc: "listMCPTools" }, // 列出MCP工具
+        { reg: "^#mcp\\s+重载", fnc: "reloadMCP" },
+        { reg: "^#mcp\\s+列表", fnc: "listMCPTools" },
         { reg: "[\\s\\S]*", fnc: "handleRandomReply", log: false }
       ]
     })
 
-    // 初始化配置（轻量级，可以每次执行）
     this.initConfig()
 
-    // 获取或创建共享状态（只会初始化一次）
     const state = initializeSharedState(this.config)
 
-    // 绑定到实例
     this.messageManager = state.messageManager
     this.toolInstances = state.toolInstances
     this.functions = state.functions
@@ -127,7 +123,6 @@ export class ExamplePlugin extends plugin {
     this.initTools()
     this.initMessageHistory()
 
-    // 一次性初始化
     if (!pluginInitialized) {
       pluginInitialized = true
       this.initMCP()
@@ -141,13 +136,8 @@ export class ExamplePlugin extends plugin {
       oneapi: this.config.oneapi_tools
     }
 
-    // 获取本地工具
     const localTools = this.getToolsByName(toolConfig[provider] || this.config.openai_tools)
-
-    // 获取 MCP 工具（如果已加载）
     const mcpTools = mcpManager.getAllTools() || []
-
-    // 合并工具列表
     this.tools = [...localTools, ...mcpTools]
   }
 
@@ -228,23 +218,19 @@ export class ExamplePlugin extends plugin {
     const configDir = path.join(process.cwd(), "plugins/test-plugin/config")
     const configDefaultDir = path.join(process.cwd(), "plugins/test-plugin/config_default")
 
-    // 需要检查的配置文件列表
     const configFiles = ["message.yaml", "mcp-servers.yaml"]
 
-    // 检查config_default目录是否存在
     if (!fs.existsSync(configDefaultDir)) {
       logger.error(`[配置] 默认配置目录不存在: ${configDefaultDir}`)
       logger.error(`[配置] 请确保 config_default 目录存在并包含默认配置文件`)
       return false
     }
 
-    // 确保config目录存在
     if (!fs.existsSync(configDir)) {
       fs.mkdirSync(configDir, { recursive: true })
       logger.info(`[配置] 已创建配置目录: ${configDir}`)
     }
 
-    // 检查并复制缺失的配置文件
     for (const fileName of configFiles) {
       const configPath = path.join(configDir, fileName)
       const defaultPath = path.join(configDefaultDir, fileName)
@@ -263,7 +249,6 @@ export class ExamplePlugin extends plugin {
   }
 
   initConfig() {
-    // 先确保配置文件存在
     this.ensureConfigFiles()
 
     const configDir = path.join(process.cwd(), "plugins/test-plugin/config")
@@ -272,7 +257,6 @@ export class ExamplePlugin extends plugin {
     const defaultConfigPath = path.join(configDefaultDir, "message.yaml")
 
     try {
-      // 检查默认配置文件是否存在
       if (!fs.existsSync(defaultConfigPath)) {
         logger.error(`[配置] 默认配置文件不存在: ${defaultConfigPath}`)
         logger.error(`[配置] 请在 config_default 目录下创建 message.yaml 文件`)
@@ -280,22 +264,18 @@ export class ExamplePlugin extends plugin {
         return
       }
 
-      // 读取默认配置
       const defaultConfig = YAML.parse(fs.readFileSync(defaultConfigPath, "utf8"))
 
       if (fs.existsSync(configPath)) {
-        // 读取用户配置并与默认配置合并
         const config = YAML.parse(fs.readFileSync(configPath, "utf8"))
         const merged = this.mergeConfig(defaultConfig, config)
 
-        // 如果配置有更新，写回文件
         if (JSON.stringify(config) !== JSON.stringify(merged)) {
           fs.writeFileSync(configPath, YAML.stringify(merged))
           logger.info(`[配置] 配置文件已更新，合并了新增字段`)
         }
         this.config = merged.pluginSettings
       } else {
-        // 配置文件不存在，从默认配置创建
         fs.mkdirSync(path.dirname(configPath), { recursive: true })
         fs.writeFileSync(configPath, YAML.stringify(defaultConfig))
         logger.info(`[配置] 已从默认配置创建: ${configPath}`)
@@ -324,7 +304,6 @@ export class ExamplePlugin extends plugin {
     return this.config.allowedGroups.some(id => String(id) === String(e.group_id))
   }
 
-  // 消息历史操作
   async getGroupUserMessages(groupId, userId) {
     const redisKey = `${this.messageHistoriesRedisKey}:${groupId}:${userId}`
     const filePath = path.join(this.messageHistoriesDir, `${groupId}_${userId}.json`)
@@ -369,7 +348,6 @@ export class ExamplePlugin extends plugin {
     await this.saveGroupUserMessages(groupId, userId, [])
   }
 
-  // 辅助方法
   formatTime() {
     const now = new Date()
     const pad = n => String(n).padStart(2, "0")
@@ -391,14 +369,12 @@ export class ExamplePlugin extends plugin {
       atContent = `艾特了 ${atUsers.join("、")}，`
     }
 
-    // 处理引用消息
     let quoteContent = ""
     if (e?.getReply) {
       try {
         const reply = await e.getReply()
         if (reply) {
           const quotedSender = reply.sender
-          // 提取被引用消息的文本内容
           let quotedMsg = ""
           if (reply.message && Array.isArray(reply.message)) {
             quotedMsg = reply.message
@@ -410,12 +386,10 @@ export class ExamplePlugin extends plugin {
             quotedMsg = reply.raw_message
           }
 
-          // 检查被引用消息是否包含图片
           const quotedImages = reply.message?.filter(m => m.type === "image") || []
           const hasQuotedImage = quotedImages.length > 0
 
           if (quotedSender) {
-            // 获取被引用者的群身份信息
             let quotedRole = "member"
             let quotedNickname = quotedSender.nickname || quotedSender.card || "未知用户"
 
@@ -428,13 +402,11 @@ export class ExamplePlugin extends plugin {
                   quotedNickname = quotedMemberInfo.card || quotedMemberInfo.nickname || quotedNickname
                 }
               } catch (err) {
-                // 获取成员信息失败，使用默认值
               }
             }
 
             const quotedSenderInfo = `${quotedNickname}(qq号: ${quotedSender.user_id})[群身份: ${quotedRole}]`
 
-            // 构建引用内容描述
             let quotedDescription = ""
             if (quotedMsg && hasQuotedImage) {
               quotedDescription = `"${quotedMsg}" 以及${quotedImages.length}张图片`
@@ -463,14 +435,13 @@ export class ExamplePlugin extends plugin {
     return `${this.formatTime()} ${senderInfo}: ${quoteContent}${atContent}${content.join("，")}`
   }
 
-
   getProvider() {
     return this.config?.providers?.toLowerCase()
   }
 
   getModel() {
     const models = {
-      oneapi: this.config.OneApiModel
+      oneapi: this.config.chatAiConfig.chatApiModel
     }
     return models[this.getProvider()]
   }
@@ -484,7 +455,6 @@ export class ExamplePlugin extends plugin {
       top_p: 0.9
     }
 
-    // 只有当 tools 有内容且 toolChoice 不是 "none" 时才添加工具
     if (this.config.UseTools && tools?.length && toolChoice !== "none") {
       data.tools = tools
       data.tool_choice = toolChoice
@@ -511,7 +481,7 @@ export class ExamplePlugin extends plugin {
   }
 
   filterChatByQQ(chatArray, qqNumber) {
-    const pattern = /\[\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/
+    const pattern = /\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/
     const lastIndex = chatArray.reduce((last, curr, i) =>
       curr.content?.includes(`(qq号: ${qqNumber})`) && pattern.test(curr.content) ? i : last, -1)
     return lastIndex === -1 ? chatArray : chatArray.slice(0, lastIndex + 1)
@@ -536,7 +506,6 @@ export class ExamplePlugin extends plugin {
     return [...system, ...nonSystem.slice(-this.MAX_HISTORY)]
   }
 
-  // 主处理方法
   async handleRandomReply(e) {
     if (!this.config.enabled || !this.checkGroupPermission(e) || this.isCommand(e) || !e.group_id) {
       return false
@@ -576,7 +545,6 @@ export class ExamplePlugin extends plugin {
         videos = rsp?.message?.filter(m => m.type === "video") || []
       }
 
-      // 获取成员信息
       const memberInfo = await limit(async () => {
         try {
           return await e.bot.pickGroup(groupId).pickMember(e.sender.user_id).info
@@ -605,7 +573,6 @@ export class ExamplePlugin extends plugin {
           .join("\n")
       }
 
-      // 初始化MCP工具systemPrompt
       const mcpPrompts = mcpManager.getMCPSystemPrompts({
         messageType: e.message_type,
         groupId: e.group_id,
@@ -616,33 +583,32 @@ export class ExamplePlugin extends plugin {
 【认知系统初始化】
 ${this.config.systemContent}
 
-【核心身份原则】 
-1. 实时数据
-   ${JSON.stringify({
+【核心身份原则】
+
+实时数据
+${JSON.stringify({
         group_info: { administrators: await limit(() => getHighLevelMembers(e.group)) },
         environmental_factors: { local_time: "北京时间: " + new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) }
       }, null, 2)}
-
 2.【消息格式】
-   [MM-DD HH:MM:SS] 昵称(QQ号: xxx)[群身份: xxx]: 在群里说: {message}
+[MM-DD HH:MM:SS] 昵称(QQ号: xxx)[群身份: xxx]: 在群里说: {message}
 3.【艾特、@格式】
-   @+qq号,例如@32174，@xxxxx
+@+qq号,例如@32174，@xxxxx
 
 ${mcpPrompts}
 【工具使用隐藏规则】
-|* ：
-   | 1⃣ 严禁在回复中显示工具调用代码或函数名称
-   | 2⃣ 工具执行后，以自然对话方式呈现结果，如同人类完成了该任务
-    **绝对禁止**在任何回复中显示**工具调用代码、函数名称或任何内部执行细节**。这包括但不限于：
-    *   \`print(...)\`、\`tool_name(...)\` 等类似编程语言的语法。
-    *   \`[tool_code]\`、\` <tool_code> \` 等任何形式的工具代码块标记。
-   | 3⃣ 示例转换:
-   |   ✅ 正确: "八重神子的全身像已经画好啦，按照你要求的侧面视角做的，感觉还挺好看的~"
-   |   ❌ 错误示例 (绝对不允许):**
-        *   \`[tool_code]\`
-        *   \`print(pokeTool(user_qq_number=1390963734))\`
-        *   \`print(pokeTool(user_qq_number=1390963734))\`
-        *   "我正在运行 \`pokeTool\` 函数..."
+1⃣ 严禁在回复中显示工具调用代码或函数名称
+2⃣ 工具执行后，以自然对话方式呈现结果，如同人类完成了该任务
+绝对禁止在任何回复中显示工具调用代码、函数名称或任何内部执行细节。这包括但不限于：
+* \`print(...)\`、\`tool_name(...)\` 等类似编程语言的语法。
+* \`[tool_code]\`、\` <tool_code> \` 等任何形式的工具代码块标记。
+3⃣ 示例转换:
+✅ 正确: "八重神子的全身像已经画好啦，按照你要求的侧面视角做的，感觉还挺好看的~"
+❌ 错误示例 (绝对不允许):**
+* \`[tool_code]\`
+* \`print(pokeTool(user_qq_number=1390963734))\`
+* \`print(pokeTool(user_qq_number=1390963734))\`
+* "我正在运行 \`pokeTool\` 函数..."
 
 【群聊消息记录】
 `
@@ -653,12 +619,24 @@ ${mcpPrompts}
 
         if (chatHistory?.length) {
           const memberMap = await limit(() => e.bot.pickGroup(groupId).getMemberMap())
-          groupUserMessages = await Promise.all(
-            chatHistory.reverse().map(async msg => ({
+
+          // 使用 message_id 过滤当前消息
+          const currentMessageId = e.message_id
+
+          groupUserMessages = chatHistory
+            .reverse()
+            .filter(msg => {
+              // 直接用 message_id 判断，过滤掉当前消息
+              if (msg.message_id === currentMessageId) {
+                logger.debug(`[历史去重] 过滤当前消息: message_id=${msg.message_id}`)
+                return false
+              }
+              return true
+            })
+            .map(msg => ({
               role: msg.sender.user_id === Bot.uin ? "assistant" : "user",
               content: `[${msg.time}] ${msg.sender.nickname}(QQ号:${msg.sender.user_id})[群身份: ${roleMap[msg.sender.role] || "member"}]: ${msg.content}`
             }))
-          )
         }
       }
 
@@ -668,9 +646,8 @@ ${mcpPrompts}
       session.userContent = userContent
       groupUserMessages = this.trimMessageHistory(groupUserMessages)
       groupUserMessages = this.filterChatByQQ(groupUserMessages, e.user_id)
-      session.groupUserMessages = this.formatMessages(groupUserMessages, e)
+      session.groupUserMessages = this.formatMessages(groupUserMessages, e, userContent)
 
-      // 确定工具选择
       let toolChoice = "auto"
       if (videos?.length >= 1) {
         session.tools = this.getToolsByName(["videoAnalysisTool"])
@@ -688,13 +665,11 @@ ${mcpPrompts}
         if (session.tools?.length) toolChoice = { type: "function", function: { name: "aiMindMapTool" } }
       }
 
-      // 获取bot角色
       const botMemberMap = await limit(() => e.bot.pickGroup(groupId).getMemberMap())
       const botRole = roleMap[botMemberMap.get(Bot.uin)?.role] || "member"
       session.toolContent = await limit(() =>
         this.buildMessageContent({ nickname: Bot.nickname, user_id: Bot.uin, role: botRole }, "", [], [], e.group))
 
-      // API请求
       const requestData = this.buildRequestData(session.groupUserMessages, session.tools, toolChoice)
       let response = await this.retryRequest(limit, requestData, session.toolContent)
 
@@ -705,7 +680,6 @@ ${mcpPrompts}
 
       const message = response.choices[0].message || {}
 
-      // 处理工具调用
       if (message.tool_calls?.length) {
         await this.processToolCalls(message, e, session, session.groupUserMessages, atQq, senderRole, targetRole, limit)
       } else if (message.content) {
@@ -724,14 +698,23 @@ ${mcpPrompts}
     }
   }
 
-  formatMessages(messages, e) {
+  formatMessages(messages, e, currentUserContent = null) {
     if (!messages?.length) return messages
 
     const systemMsgs = messages.filter(m => m.role === "system")
     const lastUser = messages[messages.length - 1]?.role === "user" ? [messages[messages.length - 1]] : []
-    const middle = messages.slice(systemMsgs.length, messages.length - lastUser.length)
+    let middle = messages.slice(systemMsgs.length, messages.length - lastUser.length)
 
-    const formatted = middle.map(m => m.content).join("\n")
+    // 格式化中间消息
+    const formattedLines = []
+
+    for (const msg of middle) {
+      if (msg.role === "user" && msg.content) {
+        formattedLines.push(msg.content)
+      }
+    }
+
+    const formatted = formattedLines.join("\n")
 
     return [
       ...systemMsgs,
@@ -739,6 +722,34 @@ ${mcpPrompts}
       { role: "assistant", content: "【系统提示】: 收到，我会根据历史记录和最新消息回复，需要时调用工具" },
       ...lastUser
     ].filter(Boolean)
+  }
+
+  /**
+   * 格式化工具返回结果（截断过长内容）
+   */
+  formatToolResult(content, toolName) {
+    if (!content) return "执行完成"
+    let result = typeof content === "string" ? content : JSON.stringify(content)
+    const maxLength = {
+      freeSearchTool: 500,
+      webParserTool: 500,
+      chatHistoryTool: 800,
+      default: 300
+    }
+
+    const limit = maxLength[toolName] || maxLength.default
+
+    if (result.length > limit) {
+      result = result.substring(0, limit) + "...(内容已截断)"
+    }
+
+    if (result.includes("成功")) {
+      return "✓ " + result
+    } else if (result.includes("失败") || result.includes("错误")) {
+      return "✗ " + result
+    }
+
+    return result
   }
 
   async retryRequest(limit, requestData, toolContent, retries = 1, toolName) {
@@ -755,13 +766,10 @@ ${mcpPrompts}
   }
 
   /**
-   * 处理工具调用 - 统一处理本地工具和MCP工具
-   */
-  /**
    * 处理工具调用 - 支持多轮工具调用
    */
   async processToolCalls(message, e, session, groupUserMessages, atQq, senderRole, targetRole, limit) {
-    const MAX_TOOL_ROUNDS = this.config.maxToolRounds // 最大工具调用轮数，防止无限循环
+    const MAX_TOOL_ROUNDS = this.config.maxToolRounds
     let currentMessage = message
     let currentMessages = [...groupUserMessages]
     let round = 0
@@ -773,7 +781,6 @@ ${mcpPrompts}
       const executedTools = new Map()
       const validResults = []
 
-      // 执行当前轮次的所有工具
       for (const toolCall of currentMessage.tool_calls) {
         const { id, type, function: funcData } = toolCall
         if (type !== "function") continue
@@ -796,11 +803,7 @@ ${mcpPrompts}
           continue
         }
 
-        // 本地工具参数处理
         if (isLocalTool) {
-          // if (["jinyanTool", "pokeTool"].includes(toolName) && atQq.length) {
-          //   params.target = atQq.length === 1 ? String(atQq[0]) : atQq.map(String)
-          // }
           if (toolName === "jinyanTool") {
             if (senderRole) params.senderRole = senderRole
             if (targetRole) params.targetRole = targetRole
@@ -840,30 +843,22 @@ ${mcpPrompts}
 
       session.toolName = validResults[validResults.length - 1]?.toolName
 
-      // // 构建消息
-      // const cleanedMessages = round === 1
-      //   ? removeToolPromptsFromMessages(currentMessages)
-      //   : currentMessages
-
-      // 构建消息
       const cleanedMessages = currentMessages
 
       currentMessages = [
         ...cleanedMessages,
-        {
-          role: "assistant",
-          content: null,
-          tool_calls: validResults.map(r => r.toolCall)
-        },
         ...validResults.map(({ toolCall, toolName, result }) => ({
           role: "tool",
           tool_call_id: toolCall.id,
           name: toolName,
           content: result
-        }))
+        })),
+        {
+          role: "user",
+          content: "[系统通知] 工具已全部执行完成，请直接用自然口语回复用户结果，你只负责自然口语对话没有调用工具的功能。禁止输出任何代码格式如print()、tool_name()、|*...*|等。"
+        }
       ]
 
-      // 请求下一轮（带工具，允许继续调用）
       const nextRequest = this.buildRequestData(currentMessages, session.tools, "auto")
       const nextResponse = await this.retryRequest(limit, nextRequest, session.toolContent, 1, session.toolName)
 
@@ -871,7 +866,6 @@ ${mcpPrompts}
 
       currentMessage = nextResponse.choices[0].message
 
-      // 如果没有新的工具调用，输出文本回复
       if (!currentMessage.tool_calls?.length && currentMessage.content) {
         await this.handleTextResponse(
           currentMessage.content,
@@ -885,7 +879,6 @@ ${mcpPrompts}
       }
     }
 
-    // 如果达到最大轮数或没有内容，强制获取文本回复
     if (round >= MAX_TOOL_ROUNDS) {
       logger.warn(`[工具调用] 达到最大轮数 ${MAX_TOOL_ROUNDS}，强制结束`)
     }
@@ -905,26 +898,21 @@ ${mcpPrompts}
     }
   }
 
-
-
   /**
    * 执行工具 - 统一处理本地工具和MCP工具
    */
   async executeTool(tool, params, e, limit, isRetry = false) {
     try {
-      // 检查是否为MCP工具（通过工具名称字符串判断）
       if (typeof tool === "string" && mcpManager.isMCPTool(tool)) {
         const realName = mcpManager.getRealToolName(tool)
         const mcpResult = await limit(() => mcpManager.executeTool(realName, params))
 
-        // 处理MCP返回结果
         if (mcpResult?.content && Array.isArray(mcpResult.content)) {
           return mcpResult.content.map(c => c.text || JSON.stringify(c)).join("\n")
         }
         return mcpResult
       }
 
-      // 本地工具执行
       if (tool && typeof tool.execute === "function") {
         return await limit(() => tool.execute(params, e))
       }
@@ -963,7 +951,6 @@ ${mcpPrompts}
 
   async sendSegmentedMessage(e, output, quoteChance = 0.4) {
     try {
-      // 随机决定是否引用回复（默认40%概率）
       const shouldQuote = Math.random() < quoteChance
       const { result, hasAt, atQQList } = await this.convertAtInString(output, e.group)
 
@@ -984,7 +971,6 @@ ${mcpPrompts}
       const segments = this.splitMessage(output)
       for (let i = 0; i < segments.length; i++) {
         if (segments[i]?.trim()) {
-          // 只在第一段消息时引用，避免多段都引用
           const quote = shouldQuote && i === 0
           if (hasAt && i === 0) {
             await e.reply([...atQQList.map(qq => segment.at(qq)), ' ', segments[i].trim()])
@@ -1009,8 +995,7 @@ ${mcpPrompts}
     const cqCodes = [], emojis = []
     let processed = text
 
-    // 保护CQ码和emoji
-    processed = processed.replace(/\[CQ:[^\]]+\]/g, m => { cqCodes.push(m); return `{{CQ${cqCodes.length - 1}}}` })
+    processed = processed.replace(/$$CQ:[^$$]+$$/g, m => { cqCodes.push(m); return `{{CQ${cqCodes.length - 1}}}` })
     processed = processed.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]/gu, m => { emojis.push(m); return `{{E${emojis.length - 1}}}` })
     processed = processed.replace(/\.{3,}|…+/g, "{{...}}")
 
@@ -1077,26 +1062,24 @@ ${mcpPrompts}
   }
 
   processToolSpecificMessage(content, toolName) {
-    let output = content.replace(/\\n/g, "\n")
+    let output = content.replace(/\n/g, "\n")
 
     // 清理模式
     const patterns = [
-      /\[图片\]/g,
-      /[\s\S]*在群里说[:：]\s*/g,
-      /\[\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]\s*.*?[:：]\s*/g,
-      /```[\s\S]*?```/g
+      /$$图片$$/g,
+      /[\s\S]在群里说[:：]\s/g,
+      /$$\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$$\s*.?[:：]\s/g,
+      /[\s\S]*?/g
     ]
 
     for (const p of patterns) output = output.replace(p, "").trim()
-
     // 提取消息内容
-    const match = /\[群身份: .+?\][:：]\s*(.*)/i.exec(output)
+    const match = /$$群身份: .+?$$[:：]\s*(.)/i.exec(output)
     if (match) output = match[1]
-    output = output.replace(/^[说說][:：]\s*/, "")
+    output = output.replace(/^[说說][:：]\s/, "")
 
     output = ThinkingProcessor.removeThinking(output)
-    output = output.replace(/!?\[(.*?)\]\((.*?)\)/g, "$1\n- $2")
-
+    output = output.replace(/!?$$(.*?)$$(.∗?)(.∗?)/g, "$1\n- $2")
     return output.trim()
   }
 
@@ -1136,8 +1119,8 @@ ${mcpPrompts}
   }
 
   /**
- * 初始化MCP服务器连接
- */
+   * 初始化MCP服务器连接
+   */
   async initMCP() {
     try {
       const configDir = path.join(process.cwd(), "plugins/test-plugin/config")
@@ -1145,12 +1128,10 @@ ${mcpPrompts}
       const configPath = path.join(configDir, "mcp-servers.yaml")
       const defaultConfigPath = path.join(configDefaultDir, "mcp-servers.yaml")
 
-      // 确保配置目录存在
       if (!fs.existsSync(configDir)) {
         fs.mkdirSync(configDir, { recursive: true })
       }
 
-      // 如果配置文件不存在，从config_default复制
       if (!fs.existsSync(configPath)) {
         if (fs.existsSync(defaultConfigPath)) {
           fs.copyFileSync(defaultConfigPath, configPath)
@@ -1163,7 +1144,6 @@ ${mcpPrompts}
         }
       }
 
-      // 再次检查配置文件是否存在
       if (!fs.existsSync(configPath)) {
         logger.info("[MCP] MCP配置文件不存在，跳过初始化")
         return
@@ -1176,7 +1156,6 @@ ${mcpPrompts}
         return
       }
 
-      // 检查是否有启用的服务器
       const enabledServers = Object.entries(mcpConfig.servers).filter(([_, config]) => config.enabled)
 
       if (enabledServers.length === 0) {
@@ -1184,12 +1163,10 @@ ${mcpPrompts}
         return
       }
 
-      // 连接所有启用的服务器
       for (const [serverName, config] of enabledServers) {
         await mcpManager.connectServer(serverName, config)
       }
 
-      // 更新工具列表（合并本地工具和MCP工具）
       this.updateToolsList()
 
       logger.info(`[MCP] 初始化完成，共加载 ${mcpManager.tools.size} 个MCP工具`)
@@ -1202,16 +1179,11 @@ ${mcpPrompts}
    * 更新工具列表（合并本地工具和MCP工具）
    */
   updateToolsList() {
-    // 获取本地工具
     const localTools = this.getToolsByName(this.config.oneapi_tools || [])
-
-    // 获取MCP工具
     const mcpTools = mcpManager.getAllTools() || []
 
-    // 合并工具列表
     this.tools = [...localTools, ...mcpTools]
 
-    // 更新session中的工具
     for (const [sessionId, session] of this.sessionMap) {
       session.tools = this.tools
     }
@@ -1231,10 +1203,7 @@ ${mcpPrompts}
     await e.reply("正在重载MCP配置...")
 
     try {
-      // 断开所有连接
       await mcpManager.disconnectAll()
-
-      // 重新初始化
       await this.initMCP()
 
       const toolCount = mcpManager.tools?.size || 0

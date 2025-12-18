@@ -2,7 +2,9 @@ import { AbstractTool } from './AbstractTool.js';
 import { getBase64Image } from '../../utils/fileUtils.js';
 import { dependencies } from "../../dependence/dependencies.js";
 const { mimeTypes } = dependencies;
-
+import fs from "fs";
+import YAML from "yaml";
+import path from "path";
 /**
  * 图片处理工具类，用于处理用户的图片相关请求
  */
@@ -116,6 +118,11 @@ export class GoogleImageAnalysisTool extends AbstractTool {
 
     async func(opts, e) {
         try {
+            // 配置路径
+            // 配置路径
+            const configPath = path.join(process.cwd(), 'plugins/test-plugin/config/message.yaml');
+            const configFile = fs.readFileSync(configPath, 'utf8');
+            const config = YAML.parse(configFile).pluginSettings;
             console.log(opts.images);
             // 确保 opts.images 是数组并处理每个URL
             const rawImages = Array.isArray(opts.images) ? opts.images :
@@ -165,11 +172,11 @@ export class GoogleImageAnalysisTool extends AbstractTool {
             try {
 
 
-                const apiUrl = "https://api.bltcy.ai/v1/chat/completions"
-                const apiKey = 'sk-lppbA1igIMAnHfh0IKmbE8C4OkyGzPPt0ExyzcFcB9U43teS'
+                const apiUrl = config.analysisAiConfig?.analysisApiUrl || 'https://api.openai.com/v1/chat/completions'
+                const apiKey = config.analysisAiConfig?.analysisApiKey || 'sk-xxxxxx'
 
                 const requestData = {
-                    model: "gemini-3-pro-preview",
+                    model: config.analysisAiConfig?.analysisApiModel || "gemini-3-pro-image-preview",
                     messages: history
                 }
 

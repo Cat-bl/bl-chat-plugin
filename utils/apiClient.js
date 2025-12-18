@@ -15,12 +15,12 @@ export async function YTapi(requestData, config, toolContent, toolName) {
 
         if (config.UseTools) {
             // UseTools 开启，先调用 OpenAI API
-            const openaiUrl = `${config.OpenAiUrl}`;
+            const openaiUrl = `${config.toolsAiConfig.toolsAiUrl}`;
             // 确保使用OpenAiModel的模型
-            if (!config.OpenAiApikey) return { error: "OpenAI stoken is not configured" };
+            if (!config.toolsAiConfig.toolsAiApikey) return { error: "OpenAI stoken is not configured" };
 
             const openaiHeaders = {
-                'Authorization': `Bearer ${config.OpenAiApikey}`,
+                'Authorization': `Bearer ${config.toolsAiConfig.toolsAiApikey}`,
                 'Content-Type': 'application/json'
             };
 
@@ -29,11 +29,11 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                 // 使用config.OpenAiModel替换请求中的模型
                 const openaiRequestData = {
                     ...requestData,
-                    model: config.OpenAiModel,
+                    model: config.toolsAiConfig.toolsAiModel,
                     stream: false
                 };
-                // logger.error(config.OpenAiApikey, config.OpenAiModel, JSON.stringify(openaiRequestData))
-                // logger.error('已触发全局AI对话', config.OpenAiApikey, config.OpenAiModel)
+                logger.error(config.toolsAiConfig.toolsAiApikey, config.toolsAiConfig.toolsAiModel, JSON.stringify(openaiRequestData))
+                // logger.error('已触发全局AI对话', config.toolsAiConfig.toolsAiApikey, config.toolsAiConfig.toolsAiModel)
                 openaiResponse = await fetch(openaiUrl, {
                     method: 'POST',
                     headers: openaiHeaders,
@@ -65,16 +65,15 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             const hasToolCalls = openaiData?.choices?.[0]?.message?.tool_calls?.length > 0;
             if (hasToolCalls) {
                 // 直接返回 tool_calls 响应，保持 OpenAI 模型
-                // 不修改模型名称，保持使用 OpenAiModel
                 return processResponse(openaiData);
             }
 
             // 检查 OneAPI 配置
-            if (!config.OneApiUrl || !config.OneApiModel || !config.OneApiKey?.length) {
+            if (!config.chatAiConfig.chatApiUrl || !config.chatAiConfig.chatApiModel || !config.chatAiConfig.chatApiKey?.length) {
                 return { error: "OneAPI URL, Model, or API Key is not configured" };
             }
-            url = config.OneApiUrl.endsWith('completions') ? config.OneApiUrl : `${config.OneApiUrl}/v1/chat/completions`;
-            const oneApiKey = config.OneApiKey[Math.floor(Math.random() * config.OneApiKey.length)];
+            url = config.chatAiConfig.chatApiUrl.endsWith('completions') ? config.chatAiConfig.chatApiUrl : `${config.chatAiConfig.chatApiUrl}/v1/chat/completions`;
+            const oneApiKey = config.chatAiConfig.chatApiKey;
             headers = {
                 'Authorization': `Bearer ${oneApiKey}`,
                 'Content-Type': 'application/json'
@@ -102,23 +101,23 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                 .filter(Boolean);
 
             finalRequestData = {
-                model: config.OneApiModel,
+                model: config.chatAiConfig.chatApiModel,
                 messages: processedMessages,
                 stream: false
             };
         } else {
             // UseTools 关闭，直接使用 OneAPI
-            if (!config.OneApiUrl || !config.OneApiModel || !config.OneApiKey?.length) {
+            if (!config.chatAiConfig.chatApiUrl || !config.chatAiConfig.chatApiModel || !config.chatAiConfig.chatApiKey?.length) {
                 return { error: "OneAPI URL, Model, or API Key is not configured" };
             }
-            url = config.OneApiUrl.endsWith('completions') ? config.OneApiUrl : `${config.OneApiUrl}/v1/chat/completions`;
-            const oneApiKey = config.OneApiKey[Math.floor(Math.random() * config.OneApiKey.length)];
+            url = config.chatAiConfig.chatApiUrl.endsWith('completions') ? config.chatAiConfig.chatApiUrl : `${config.chatAiConfig.chatApiUrl}/v1/chat/completions`;
+            const oneApiKey = config.chatAiConfig.chatApiKey[Math.floor(Math.random() * config.chatAiConfig.chatApiKey.length)];
             headers = {
                 'Authorization': `Bearer ${oneApiKey}`,
                 'Content-Type': 'application/json'
             };
             finalRequestData = {
-                model: config.OneApiModel,
+                model: config.chatAiConfig.chatApiModel,
                 messages: requestData.messages,
                 stream: false
             };

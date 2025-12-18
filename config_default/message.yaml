@@ -1,5 +1,6 @@
 pluginSettings:
   enabled: true
+  botName: 哈基米
   groupHistory: true
   UseTools: true
   replyChance: 0
@@ -19,13 +20,31 @@ pluginSettings:
   systemContent: 你的名字叫哈基米，你是一个热心的群友，可以热心的解决群友的问题，文明的和群友聊天
   ForcedAvatarMode: true
   ForceformatMessage: false
-  OpenAiUrl: https://api.openai.com/v1/chat/completions
-  OpenAiModel: gemini-2.5-flash
-  OpenAiApikey: sk-xxxxxx
-  OneApiUrl: https://api.openai.com
-  OneApiModel: gemini-2.5-pro
-  OneApiKey:
-    - sk-xxxxx
+  toolsAiConfig: {
+    toolsAiUrl: https://api.openai.com/v1/chat/completions,
+    toolsAiModel: gemini-2.5-flash,
+    toolsAiApikey: sk-xxxxx
+  }
+  chatAiConfig: {
+    chatApiUrl: https://api.openai.com/v1/chat/completions,
+    chatApiModel: gemini-2.5-pro,
+    chatApiKey: sk-xxxxx
+  }
+  imageEditAiConfig: {
+    imageEditApiUrl: https://api.openai.com/v1/chat/completions,
+    imageEditApiModel: gemini-3-pro-image-preview,
+    imageEditApiKey: sk-xxxxx
+  }
+  analysisAiConfig: {
+    analysisApiUrl: https://api.openai.com/v1/chat/completions,
+    analysisApiModel: gemini-3-pro-preview,
+    analysisApiKey: sk-xxxxx
+  }
+  searchAiConfig: {
+    searchApiUrl: https://api.openai.com/v1/chat/completions,
+    searchApiModel: deepseek-r1-search,
+    searchApiKey: sk-xxxxx
+  }
   openai_tool_choice: auto
   oneapi_tools:
     - likeTool
