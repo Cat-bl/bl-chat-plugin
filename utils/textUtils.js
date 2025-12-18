@@ -5,28 +5,44 @@
  */
 export const removeToolPromptsFromMessages = (messages = []) => {
     return messages.map(msg => {
-        if (msg.role !== "system") return msg
+        // 处理 assistant 消息中的【系统提示】
+        if (msg.role === "assistant" && msg.content?.includes("【系统提示】")) {
+            let content = msg.content
 
-        let content = msg.content
+            // 移除 "需要时调用工具" 相关文字
+            content = content.replace(/[，,]?\s*需要\s*时?\s*调用工具/g, "")
 
-        // 移除 MCP 扩展能力部分
-        content = content.replace(/\n*【MCP扩展能力】[\s\S]*?(?=\n【|$)/g, "")
+            // 清理末尾可能残留的标点和空格
+            content = content.replace(/[，,\s]+$/g, "").trim()
 
-        // 移除记忆系统部分
-        content = content.replace(/\n*【记忆系统】[\s\S]*?(?=\n【|$)/g, "")
+            return { ...msg, content }
+        }
 
-        // 移除可用工具部分
-        content = content.replace(/\n*【可用工具】[\s\S]*?(?=\n【|$)/g, "")
+        // 处理 system 消息
+        if (msg.role === "system") {
+            let content = msg.content
 
-        // 移除本地工具部分
-        content = content.replace(/\n*【本地工具】[\s\S]*?(?=\n【|$)/g, "")
+            // 移除 MCP 扩展能力部分
+            content = content.replace(/\n*【MCP扩展能力】[\s\S]*?(?=\n【|$)/g, "")
 
-        // 移除 MCP工具 部分
-        content = content.replace(/\n*【MCP工具】[\s\S]*?(?=\n【|$)/g, "")
+            // 移除记忆系统部分
+            content = content.replace(/\n*【记忆系统】[\s\S]*?(?=\n【|$)/g, "")
 
-        // 清理多余空行
-        content = content.replace(/\n{3,}/g, "\n\n").trim()
+            // 移除可用工具部分
+            content = content.replace(/\n*【可用工具】[\s\S]*?(?=\n【|$)/g, "")
 
-        return { ...msg, content }
+            // 移除本地工具部分
+            content = content.replace(/\n*【本地工具】[\s\S]*?(?=\n【|$)/g, "")
+
+            // 移除 MCP工具 部分
+            content = content.replace(/\n*【MCP工具】[\s\S]*?(?=\n【|$)/g, "")
+
+            // 清理多余空行
+            content = content.replace(/\n{3,}/g, "\n\n").trim()
+
+            return { ...msg, content }
+        }
+
+        return msg
     })
-};
+}

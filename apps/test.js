@@ -840,10 +840,13 @@ ${mcpPrompts}
 
       session.toolName = validResults[validResults.length - 1]?.toolName
 
+      // // 构建消息
+      // const cleanedMessages = round === 1
+      //   ? removeToolPromptsFromMessages(currentMessages)
+      //   : currentMessages
+
       // 构建消息
-      const cleanedMessages = round === 1
-        ? removeToolPromptsFromMessages(currentMessages)
-        : currentMessages
+      const cleanedMessages = currentMessages
 
       currentMessages = [
         ...cleanedMessages,
