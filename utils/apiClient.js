@@ -32,7 +32,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                     model: config.toolsAiConfig.toolsAiModel,
                     stream: false
                 };
-                logger.error(config.toolsAiConfig.toolsAiApikey, config.toolsAiConfig.toolsAiModel, JSON.stringify(openaiRequestData))
+                // logger.error(config.toolsAiConfig.toolsAiApikey, config.toolsAiConfig.toolsAiModel, JSON.stringify(openaiRequestData))
                 // logger.error('已触发全局AI对话', config.toolsAiConfig.toolsAiApikey, config.toolsAiConfig.toolsAiModel)
                 openaiResponse = await fetch(openaiUrl, {
                     method: 'POST',

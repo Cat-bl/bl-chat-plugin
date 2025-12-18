@@ -7,13 +7,13 @@ export const removeToolPromptsFromMessages = (messages = []) => {
     return messages.map(msg => {
         // 处理 assistant 消息中的【系统提示】
         if (msg.role === "assistant" && msg.content?.includes("【系统提示】")) {
-            let content = msg.content
+            let content = "【系统提示】: 工具已全部执行完成，请直接用自然口语回复用户结果，你只负责自然口语对话没有调用工具的功能。禁止输出任何代码格式如print()、tool_name()、|*...*|等。"
 
-            // 移除 "需要时调用工具" 相关文字
-            content = content.replace(/[，,]?\s*需要\s*时?\s*调用工具/g, "")
+            // // 移除 "需要时调用工具" 相关文字
+            // content = content.replace(/[，,]?\s*需要\s*时?\s*调用工具/g, "")
 
-            // 清理末尾可能残留的标点和空格
-            content = content.replace(/[，,\s]+$/g, "").trim()
+            // // 清理末尾可能残留的标点和空格
+            // content = content.replace(/[，,\s]+$/g, "").trim()
 
             return { ...msg, content }
         }
