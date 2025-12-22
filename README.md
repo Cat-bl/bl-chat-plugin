@@ -1,6 +1,16 @@
 ### 自用插件留存
 修改自y-tian-plugin，移除了多余功能，重构全局对话实现代码，新增MCP工具功能，新增部分本地工具
 
+### 1. 安装
+
+在Yunzai根目录下执行：
+
+```bash
+git clone --depth=1 https://github.com/Cat-bl/test-plugin plugins/test-plugin
+cd plugins/test-plugin
+pnpm install
+```
+
 
 ### 首次启动时会自动创建config文件夹，请不要修改或删除config_default文件夹和里面的文件
 
