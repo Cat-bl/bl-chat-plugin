@@ -119,7 +119,7 @@ systemPrompt: |
 ### 工具调用模型配置 (`toolsAiConfig`)
 ```yaml
 toolsAiUrl: "https://api.openai.com/v1/chat/completions"
-toolsAiModel: "gemini-2.5-pro"
+toolsAiModel: "gemini-2.5-flash"
 toolsAiApikey: "sk-xxxxx"
 ```
 
