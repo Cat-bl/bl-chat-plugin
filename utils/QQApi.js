@@ -67,15 +67,19 @@ export class QQApi {
 
   async getToken() {
     try {
-      const KEY_DATA = await fetch("http://127.0.0.1:3000/get_credentials", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          domain: "qzone.qq.com",
-        }),
-      }).then(res => res.json())
+      // const KEY_DATA = await fetch("http://127.0.0.1:3000/get_credentials", {
+      //   method: "POST",
+      //   headers: {
+      //     "Content-Type": "application/json",
+      //   },
+      //   body: JSON.stringify({
+      //     domain: "qzone.qq.com",
+      //   }),
+      // }).then(res => res.json())
+
+      const KEY_DATA = await Bot.sendApi('get_credentials', {
+        "domain": "qzone.qq.com",
+      })
       // logger.info(KEY_DATA.data.cookies, 666)
       return KEY_DATA.data
 
