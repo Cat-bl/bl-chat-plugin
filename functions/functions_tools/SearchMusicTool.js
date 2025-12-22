@@ -1,6 +1,8 @@
 import { AbstractTool } from './AbstractTool.js';
 import fetch from 'node-fetch';
 import md5 from 'md5';
+import YAML from "yaml";
+import path from "path";
 
 const NO_PIC = '';
 
@@ -26,7 +28,7 @@ export class SearchMusicTool extends AbstractTool {
     };
     this.musicCookies = {
       netease: '',
-      qqmusic: 'psrf_qqopenid=4D78EE58FC1A8D1C1F621690C44D911D;psrf_qqrefresh_token=D3B6F684B764E0288114AAFE767918F9;psrf_qqaccess_token=F08A2EDDC1DDA4842607EA98BDAE4854; uin=32174;qqmusic_key=Q_H_L_63k3Nq4NzLkblNqEVakMgPOx9G9gvUyT8YOjdCRgkBhaUJlhiet92jtEzJ2I0uIMUZWsmnmbiaK4n5pB-ecIGtDM48LCP-l-lwhF5nhy8n6ChOwIGmHhWQVP-jOvRBuusfhEpWbz9RoG8pMiT7Os;qm_keyst=Q_H_L_63k3Nq4NzLkblNqEVakMgPOx9G9gvUyT8YOjdCRgkBhaUJlhiet92jtEzJ2I0uIMUZWsmnmbiaK4n5pB-ecIGtDM48LCP-l-lwhF5nhy8n6ChOwIGmHhWQVP-jOvRBuusfhEpWbz9RoG8pMiT7Os;psrf_musickey_createtime=1765868272;psrf_qqunionid=E11E238E9F9A93C056CEAF798E2329D1; euin=oi-57iv*; login_type=1;tmeLoginType=2'
+      qqmusic: ''
     };
     this.highQuality = true;
     this.randomPoolSize = 20; // 随机池大小
@@ -34,6 +36,9 @@ export class SearchMusicTool extends AbstractTool {
 
   async func(opts, e) {
     const { keyword, isArtistOnly = false } = opts;
+    const config = this.loadConfig();
+    const { qqMusicToken } = config || {};
+    if (qqMusicToken) this.musicCookies.qqmusic = qqMusicToken
     try {
       // 根据是否只搜歌手决定搜索数量
       const searchCount = isArtistOnly ? this.randomPoolSize : 1;
@@ -227,5 +232,11 @@ export class SearchMusicTool extends AbstractTool {
       if (key) map.set(key, val);
     });
     return map;
+  }
+
+  // 加载配置
+  loadConfig() {
+    const configPath = path.join(process.cwd(), 'plugins/test-plugin/config/message.yaml');
+    return YAML.parse(fs.readFileSync(configPath, 'utf8')).pluginSettings;
   }
 }
