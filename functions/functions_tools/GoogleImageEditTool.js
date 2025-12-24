@@ -174,7 +174,7 @@ export class GoogleImageEditTool extends AbstractTool {
 
         // 处理 https 链接
         if (imageUrl.includes("https")) {
-            const segment = imageUrl.split("[image1]")[1] || imageUrl.split("[image]")[1];
+            const segment = imageUrl.split("[image1]")[1] || imageUrl.split("[image]")[1] || imageUrl.split("[Generated Image]")[1];
             return segment?.match(/https?:\/\/[^\s)'"]+/)?.[0];
         }
 

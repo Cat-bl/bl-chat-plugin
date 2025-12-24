@@ -161,7 +161,7 @@ export class BananaTool extends AbstractTool {
     }
 
     if (imageUrl.includes("https")) {
-      const segment = imageUrl.split("[image1]")[1] || imageUrl.split("[image]")[1];
+      const segment = imageUrl.split("[image1]")[1] || imageUrl.split("[image]")[1] || imageUrl.split("[Generated Image]")[1];
       return segment?.match(/https?:\/\/[^\s)'"]+/)?.[0];
     }
 
