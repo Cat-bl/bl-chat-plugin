@@ -45,6 +45,10 @@ const EMOJI_CONFIG = {
 }
 
 const sessionStates = new Map()
+const activeConversations = new Map() // 会话追踪: key: `${groupId}_${userId}`, value: { lastActiveTime, chatHistory: [], timer: null }
+const trackingThrottle = new Map() // 节流: key: `${groupId}_${userId}`, value: lastCallTime
+const pendingJudgments = [] // 批量判断队列
+let batchTimer = null // 批量处理定时器
 const roleMap = { owner: "owner", admin: "admin", member: "member" }
 
 let pluginInitialized = false
@@ -160,6 +164,40 @@ export class ExamplePlugin extends plugin {
       } catch (error) {
         logger.error(`定时清理消息历史记录失败: ${error}`)
       }
+    })
+  }
+
+  /**
+   * 启动/重置用户独立的会话追踪定时器
+   * @param {string} conversationKey - 会话key
+   * @param {object} newData - 要更新的数据 { chatHistory, lastActiveTime }
+   */
+  setTrackingWithTimer(conversationKey, newData = {}) {
+    const timeout = (this.config.conversationTrackingTimeout || 2) * 60000
+    const activeConv = activeConversations.get(conversationKey)
+
+    // 清除旧定时器
+    if (activeConv?.timer) {
+      clearTimeout(activeConv.timer)
+    }
+
+    // 创建新定时器
+    const timer = setTimeout(() => {
+      const conv = activeConversations.get(conversationKey)
+      // 确保清除的是同一个定时器（防止竞态）
+      if (conv?.timer === timer) {
+        activeConversations.delete(conversationKey)
+        trackingThrottle.delete(conversationKey)
+        logger.info(`[会话追踪] ${conversationKey} 超时，已清除`)
+      }
+    }, timeout)
+
+    // 原子操作：创建定时器后立即存储
+    activeConversations.set(conversationKey, {
+      lastActiveTime: Date.now(),
+      chatHistory: activeConv?.chatHistory || [],
+      ...newData,
+      timer
     })
   }
 
@@ -506,6 +544,216 @@ export class ExamplePlugin extends plugin {
     return [...system, ...nonSystem.slice(-this.MAX_HISTORY)]
   }
 
+  /**
+   * AI判断用户是否在继续跟机器人对话
+   * @param {string} userMessage - 用户新消息
+   * @param {Array} chatHistory - 对话历史数组 [{role: 'bot'|'user', content: '...'}]
+   */
+  async isUserTalkingToBot(userMessage, chatHistory = []) {
+    try {
+      const botName = this.config.botName || Bot.nickname || '机器人'
+
+      // 构建对话历史文本
+      const historyText = chatHistory.length > 0
+        ? chatHistory.map(h => `[${h.role === 'bot' ? '机器人' : '用户'}] ${h.content}`).join('\n')
+        : '(无历史记录)'
+
+      const response = await fetch(this.config.toolsAiConfig.toolsAiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.toolsAiConfig.toolsAiApikey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: this.config.toolsAiConfig.toolsAiModel,
+          messages: [
+            {
+              role: "system",
+              content: `你是QQ群聊对话判断助手。机器人名字叫"${botName}"，QQ号${Bot.uin}。
+
+判断用户新消息是否可能在跟机器人说话。
+
+【true的情况】
+- 话题自然延续（机器人说"中午好"→用户问"中午吃什么"）
+- 回应机器人的内容
+- 一般闲聊、提问
+- 没有明显跟其他人说话
+
+【false的情况】
+- @了其他人
+- 明确叫其他人名字对话
+- 话题完全无关且明显是跟别人说的
+
+你只回复true或false,绝对不要输出其他内容。
+`
+            },
+            {
+              role: "user",
+              content: `【近期对话记录】\n${historyText}\n\n【用户新消息】\n${userMessage}\n\n这条新消息是在跟机器人说话吗？`
+            }
+          ]
+        })
+      })
+
+      if (!response.ok) return false // 请求失败时默认不触发
+
+      const data = await response.json()
+      const answer = data?.choices?.[0]?.message?.content?.toLowerCase()?.trim()
+      // logger.error(answer, historyText, userMessage, 8888)
+      return answer === 'true' || answer?.includes('true')
+    } catch (error) {
+      logger.error('[会话追踪] AI判断失败:', error)
+      return false // 出错时默认不触发
+    }
+  }
+
+  /**
+   * 加入批量判断队列
+   */
+  addToBatchJudgment(conversationKey, userMessage, chatHistory, e) {
+    return new Promise(resolve => {
+      pendingJudgments.push({ conversationKey, userMessage, chatHistory, e, resolve })
+
+      if (!batchTimer) {
+        const batchDelay = (this.config.batchJudgmentDelay || 3) * 1000
+        batchTimer = setTimeout(() => this.processBatchJudgments(), batchDelay)
+      }
+    })
+  }
+
+  /**
+   * 处理批量判断队列
+   */
+  async processBatchJudgments() {
+    batchTimer = null
+    if (pendingJudgments.length === 0) return
+
+    const batch = pendingJudgments.splice(0)
+
+    if (batch.length === 1) {
+      const result = await this.isUserTalkingToBot(batch[0].userMessage, batch[0].chatHistory)
+      batch[0].resolve(result)
+      return
+    }
+
+    try {
+      const results = await this.batchIsUserTalkingToBot(batch)
+      batch.forEach((item, i) => item.resolve(results[i] || false))
+    } catch (error) {
+      logger.error('[批量判断] 失败:', error)
+      batch.forEach(item => item.resolve(false))
+    }
+  }
+
+  /**
+   * 批量判断多条消息是否在跟机器人对话
+   */
+  async batchIsUserTalkingToBot(batch) {
+    try {
+      const botName = this.config.botName || Bot.nickname || '机器人'
+
+      // 为每条消息生成唯一标识
+      const batchWithIds = batch.map((item, i) => ({
+        ...item,
+        id: `MSG_${i + 1}_${item.e?.user_id || 'unknown'}`
+      }))
+
+      const messagesText = batchWithIds.map(item => {
+        const recentHistory = (item.chatHistory || []).slice(-3).map(h => `[${h.role === 'bot' ? '机器人' : '用户'}] ${h.content}`).join('\n')
+        const userName = item.e?.sender?.card || item.e?.sender?.nickname || '未知用户'
+        return `【${item.id}】用户: ${userName}(QQ:${item.e?.user_id})
+对话历史:
+${recentHistory || '(无)'}
+新消息: ${item.userMessage}
+---`
+      }).join('\n\n')
+
+      const response = await fetch(this.config.toolsAiConfig.toolsAiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.toolsAiConfig.toolsAiApikey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: this.config.toolsAiConfig.toolsAiModel,
+          messages: [
+            {
+              role: "system",
+              content: `你是QQ群聊对话判断助手。机器人名字叫"${botName}"。
+
+每条消息来自不同用户，有独立的对话历史，请分别独立判断。
+- true: 该用户在跟机器人说话（话题延续、回应机器人、一般闲聊）
+- false: 该用户在跟其他人说话（@其他人、跟别人对话、或者不是跟机器人在说话）
+
+返回JSON对象，key为消息ID，value为判断结果。
+示例: {"MSG_1_12345": true, "MSG_2_67890": false}
+只返回JSON对象，不要其他内容。`
+            },
+            {
+              role: "user",
+              content: `分别判断以下${batchWithIds.length}条来自不同用户的消息:\n\n${messagesText}\n\n返回JSON对象:`
+            }
+          ]
+        })
+      })
+
+      if (!response.ok) {
+        logger.error('[批量判断] API请求失败')
+        return this.fallbackToSingleJudgment(batch)
+      }
+
+      const data = await response.json()
+      let content = data?.choices?.[0]?.message?.content?.trim() || '{}'
+
+      // 提取JSON对象
+      const jsonMatch = content.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        content = jsonMatch[0]
+      }
+
+      const resultsMap = JSON.parse(content)
+      logger.info(`[批量判断] ${batch.length}条消息，结果: ${JSON.stringify(resultsMap)}`)
+
+      // 按ID映射回结果数组
+      const results = batchWithIds.map(item => {
+        const result = resultsMap[item.id]
+        if (result === undefined) {
+          logger.warn(`[批量判断] 缺少ID ${item.id} 的结果，回退单独判断`)
+          return null // 标记需要单独判断
+        }
+        return result === true || result === 'true'
+      })
+
+      // 检查是否有需要单独判断的
+      const needsFallback = results.some(r => r === null)
+      if (needsFallback) {
+        return this.fallbackToSingleJudgment(batch, results)
+      }
+
+      return results
+    } catch (error) {
+      logger.error('[批量判断] 解析失败:', error)
+      return this.fallbackToSingleJudgment(batch)
+    }
+  }
+
+  /**
+   * 回退到单独判断
+   */
+  async fallbackToSingleJudgment(batch, partialResults = null) {
+    logger.info(`[批量判断] 回退到单独判断，共${batch.length}条`)
+    const results = []
+    for (let i = 0; i < batch.length; i++) {
+      if (partialResults && partialResults[i] !== null) {
+        results.push(partialResults[i])
+      } else {
+        const result = await this.isUserTalkingToBot(batch[i].userMessage, batch[i].chatHistory)
+        results.push(result)
+      }
+    }
+    return results
+  }
+
   async handleRandomReply(e) {
     if (!this.config.enabled || !this.checkGroupPermission(e) || this.isCommand(e) || !e.group_id) {
       return false
@@ -515,9 +763,53 @@ export class ExamplePlugin extends plugin {
     if (this.config.excludeMessageTypes.some(t => messageTypes.includes(t))) return false
 
     const hasTrigger = await this.checkTriggers(e)
-    if (!hasTrigger && Math.random() > this.config.replyChance) return false
 
-    return await this.handleTool(e)
+    // 会话追踪逻辑
+    const conversationKey = `${e.group_id}_${e.user_id}`
+    const activeConv = activeConversations.get(conversationKey)
+
+    // 如果明确触发（@或前缀），直接触发并更新追踪
+    if (hasTrigger) {
+      if (this.config.conversationTrackingEnabled) {
+        this.setTrackingWithTimer(conversationKey)
+      }
+      return await this.handleTool(e)
+    }
+
+    // 在追踪期内，判断是否在继续对话
+    if (this.config.conversationTrackingEnabled && activeConv) {
+      // 节流检查
+      const throttleKey = conversationKey
+      const lastCallTime = trackingThrottle.get(throttleKey) || 0
+      const throttleInterval = (this.config.conversationTrackingThrottle || 3) * 1000
+
+      if (Date.now() - lastCallTime < throttleInterval) {
+        // 节流期内，直接返回不触发
+        return false
+      }
+
+      // 更新节流时间
+      trackingThrottle.set(throttleKey, Date.now())
+
+      // 构建完整格式的用户消息
+      const senderRole = roleMap[e.sender?.role] || "member"
+      const senderName = e.sender?.card || e.sender?.nickname || "未知用户"
+      const userMessageFormatted = `${this.formatTime()} ${senderName}(qq号: ${e.user_id})[群身份: ${senderRole}]: 在群里说: ${e.msg || ''}`
+
+      // 使用批量判断队列
+      const isTalking = await this.addToBatchJudgment(conversationKey, userMessageFormatted, activeConv.chatHistory || [], e)
+
+      if (isTalking) {
+        // 重置定时器
+        this.setTrackingWithTimer(conversationKey)
+        return await this.handleTool(e)
+      }
+      // 判断不是在跟机器人对话，直接返回不触发
+      return false
+    }
+
+    // 未在追踪期内，不触发
+    return false
   }
 
   async handleTool(e) {
@@ -609,6 +901,14 @@ ${mcpPrompts}
 * \`print(pokeTool(user_qq_number=1390963734))\`
 * \`print(pokeTool(user_qq_number=1390963734))\`
 * "我正在运行 \`pokeTool\` 函数..."
+
+【回复格式规则 - 极其重要】
+你的回复必须是纯文本内容，绝对禁止模仿消息记录的格式！
+❌ 错误: "[12-24 12:42:25] 哈基米(QQ号: 3012184357)[群身份: admin]: 在群里说: 想听啥？"
+❌ 错误: "[时间] 昵称(QQ号: xxx)[群身份: xxx]: 内容"
+✅ 正确: "想听啥？"
+✅ 正确: "中午好呀~"
+消息记录格式仅用于你理解上下文，回复时只输出纯内容！
 
 【群聊消息记录】
 `
@@ -1009,6 +1309,34 @@ ${mcpPrompts}
     const output = await this.processToolSpecificMessage(content, toolName)
     await limit(() => this.sendSegmentedMessage(e, output))
 
+    // 更新会话追踪中的对话历史
+    if (this.config.conversationTrackingEnabled && e.group_id && e.user_id) {
+      const conversationKey = `${e.group_id}_${e.user_id}`
+      const activeConv = activeConversations.get(conversationKey)
+      if (activeConv) {
+        // 获取当前对话历史
+        let chatHistory = activeConv.chatHistory || []
+
+        // 添加用户消息
+        const senderRole = roleMap[e.sender?.role] || "member"
+        const senderName = e.sender?.card || e.sender?.nickname || "未知用户"
+        const userMsg = `${this.formatTime()} ${senderName}(qq号: ${e.user_id})[群身份: ${senderRole}]: 在群里说: ${(session.userContent || e.msg || '').substring(0, 200)}`
+        chatHistory.push({ role: 'user', content: userMsg })
+
+        // 添加机器人回复
+        const botMsg = `${this.formatTime()} ${this.config.botName || Bot.nickname}(QQ号:${Bot.uin})[群身份: member]: 在群里说: ${content.substring(0, 200)}`
+        chatHistory.push({ role: 'bot', content: botMsg })
+
+        // 只保留最近10条
+        if (chatHistory.length > 10) {
+          chatHistory = chatHistory.slice(-10)
+        }
+
+        // 重置定时器并更新数据
+        this.setTrackingWithTimer(conversationKey, { chatHistory })
+      }
+    }
+
     const now = Math.floor(Date.now() / 1000)
 
     try {
@@ -1077,7 +1405,7 @@ ${mcpPrompts}
     await limit(() => this.saveGroupUserMessages(e.group_id, e.user_id, messages))
   }
 
-  async sendSegmentedMessage(e, output, quoteChance = 0.4) {
+  async sendSegmentedMessage(e, output, quoteChance = 0.5) {
     try {
       const shouldQuote = Math.random() < quoteChance
       const { result, hasAt, atQQList } = await this.convertAtInString(output, e.group)
@@ -1191,6 +1519,9 @@ ${mcpPrompts}
 
   processToolSpecificMessage(content, toolName) {
     let output = content.replace(/\n/g, "\n")
+
+    // 过滤消息记录格式（如 "[12-24 13:25:15] 哈基米(QQ号: xxx)[群身份: xxx]: 在群里说: 内容"）
+    output = output.replace(/^\[\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]\s*[^(]+\(QQ号[:：]\s*\d+\)\[群身份[:：]\s*\w+\][:：]\s*(?:在群里说[:：]\s*)?/gi, '')
 
     // 清理模式
     const patterns = [

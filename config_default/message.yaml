@@ -4,7 +4,6 @@ pluginSettings:
   groupHistory: true
   emojiEnabled: true
   useTools: true
-  replyChance: 0
   concurrentLimit: 3
   triggerPrefixes:
     - 哈基米
@@ -17,6 +16,10 @@ pluginSettings:
   groupMaxMessages: 100
   groupChatMemoryDays: 1
   maxToolRounds: 5
+  conversationTrackingEnabled: false
+  conversationTrackingTimeout: 2
+  conversationTrackingThrottle: 3
+  batchJudgmentDelay: 10
   providers: oneapi
   systemContent: 你的名字叫哈基米，你是一个热心的群友，可以热心的解决群友的问题，文明的和群友聊天
   forcedAvatarMode: true
