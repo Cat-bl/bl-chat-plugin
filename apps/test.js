@@ -599,7 +599,7 @@ export class ExamplePlugin extends plugin {
 
       const data = await response.json()
       const answer = data?.choices?.[0]?.message?.content?.toLowerCase()?.trim()
-      // logger.error(answer, historyText, userMessage, 8888)
+      logger.error(answer, historyText, userMessage, 8888)
       return answer === 'true' || answer?.includes('true')
     } catch (error) {
       logger.error('[会话追踪] AI判断失败:', error)
