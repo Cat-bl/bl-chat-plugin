@@ -37,6 +37,9 @@ export const removeToolPromptsFromMessages = (messages = []) => {
             // 移除 MCP工具 部分
             content = content.replace(/\n*【MCP工具】[\s\S]*?(?=\n【|$)/g, "")
 
+            // 移除 工具调用 部分
+            content = content.replace(/\n*【工具调用】[\s\S]*?(?=\n【|$)/g, "")
+
             // 清理多余空行
             content = content.replace(/\n{3,}/g, "\n\n").trim()
 
