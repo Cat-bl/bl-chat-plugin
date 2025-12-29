@@ -33,13 +33,17 @@ export class SearchMusicTool extends AbstractTool {
     };
     this.highQuality = true;
     this.randomPoolSize = 20; // 随机池大小
+    this.updateTime = 0;      // 上次检查刷新时间
+    this.refreshNum = 0;      // 刷新失败次数
+    this.ckInit = false;      // 是否已初始化
   }
 
   async func(opts, e) {
     const { keyword, isArtistOnly = false } = opts;
     const config = this.loadConfig();
     const { qqMusicToken } = config || {};
-    if (qqMusicToken) this.musicCookies.qqmusic = qqMusicToken
+    if (qqMusicToken) this.musicCookies.qqmusic = qqMusicToken;
+    await this.updateQQMusicCk();
     try {
       // 根据是否只搜歌手决定搜索数量
       const searchCount = isArtistOnly ? this.randomPoolSize : 1;
@@ -239,5 +243,169 @@ export class SearchMusicTool extends AbstractTool {
   loadConfig() {
     const configPath = path.join(process.cwd(), 'plugins/bl-chat-plugin/config/message.yaml');
     return YAML.parse(fs.readFileSync(configPath, 'utf8')).pluginSettings;
+  }
+
+  // 保存配置
+  saveConfig(newToken) {
+    try {
+      const configPath = path.join(process.cwd(), 'plugins/bl-chat-plugin/config/message.yaml');
+      const config = YAML.parse(fs.readFileSync(configPath, 'utf8'));
+      config.pluginSettings.qqMusicToken = newToken;
+      fs.writeFileSync(configPath, YAML.stringify(config), 'utf8');
+    } catch (err) {
+      logger.error('[SearchMusicTool] 保存配置失败:', err);
+    }
+  }
+
+  // 检查并刷新QQ音乐cookie
+  async updateQQMusicCk() {
+    try {
+      // 每10分钟检查一次
+      if ((Date.now() - this.updateTime) < (1000 * 60 * 10)) {
+        return;
+      }
+      this.updateTime = Date.now();
+
+      const ckMap = this.getCookieMap();
+      let type = -1; // QQ:0, 微信:1
+
+      if (ckMap.get('wxunionid')) {
+        type = 1;
+      } else if (ckMap.get('psrf_qqunionid')) {
+        type = 0;
+      } else {
+        if (!this.ckInit) {
+          this.ckInit = true;
+          logger.info('[SearchMusicTool] 未设置QQ音乐ck');
+        }
+        return;
+      }
+
+      const authst = ckMap.get('qqmusic_key') || ckMap.get('qm_keyst');
+      const createTime = Number(ckMap.get('psrf_musickey_createtime') || 0) * 1000;
+
+      // 如果cookie创建时间超过12小时或没有authst则刷新
+      if (((Date.now() - createTime) > (1000 * 60 * 60 * 12) || !authst)) {
+        const result = await this.refreshQQMusicToken(ckMap, type);
+        if (result.code === 1) {
+          this.musicCookies.qqmusic = result.data;
+          this.refreshNum = 0;
+          this.saveConfig(result.data);
+          logger.info('[SearchMusicTool] QQ音乐ck已刷新');
+        } else {
+          this.refreshNum++;
+          this.ckInit = false;
+          logger.error('[SearchMusicTool] QQ音乐ck刷新失败');
+        }
+      } else if (this.refreshNum >= 3) {
+        if (!this.ckInit) {
+          this.ckInit = true;
+          logger.error('[SearchMusicTool] QQ音乐ck已失效');
+        }
+      }
+    } catch (err) {
+      logger.error('[SearchMusicTool] 更新ck出错:', err);
+    }
+  }
+
+  // 刷新QQ音乐token
+  async refreshQQMusicToken(ckMap, type) {
+    const result = { code: -1 };
+    const body = {
+      comm: {
+        _channelid: "19",
+        _os_version: "6.2.9200-2",
+        authst: "",
+        ct: "19",
+        cv: "1891",
+        guid: md5(String(ckMap.get('uin') || ckMap.get('wxuin')) + 'music'),
+        patch: "118",
+        psrf_access_token_expiresAt: 0,
+        psrf_qqaccess_token: "",
+        psrf_qqopenid: "",
+        psrf_qqunionid: "",
+        tmeAppID: "qqmusic",
+        tmeLoginType: 2,
+        uin: "0",
+        wid: "0"
+      },
+      req_0: {
+        method: "Login",
+        module: "music.login.LoginServer",
+        param: {
+          access_token: "",
+          expired_in: 0,
+          forceRefreshToken: 0,
+          musicid: 0,
+          musickey: "",
+          onlyNeedAccessToken: 0,
+          openid: "",
+          refresh_token: "",
+          unionid: ""
+        }
+      }
+    };
+
+    const param = body.req_0.param;
+    if (type === 0) {
+      // QQ登录
+      param.appid = 100497308;
+      param.access_token = ckMap.get('psrf_qqaccess_token') || '';
+      param.musicid = Number(ckMap.get('uin') || '0');
+      param.openid = ckMap.get('psrf_qqopenid') || '';
+      param.refresh_token = ckMap.get('psrf_qqrefresh_token') || '';
+      param.unionid = ckMap.get('psrf_qqunionid') || '';
+    } else if (type === 1) {
+      // 微信登录
+      param.strAppid = "wx48db31d50e334801";
+      param.access_token = ckMap.get('wxaccess_token') || '';
+      param.str_musicid = ckMap.get('wxuin') || '0';
+      param.openid = ckMap.get('wxopenid') || '';
+      param.refresh_token = ckMap.get('wxrefresh_token') || '';
+      param.unionid = ckMap.get('wxunionid') || '';
+    } else {
+      return result;
+    }
+    param.musickey = (ckMap.get('qqmusic_key') || ckMap.get('qm_keyst')) || '';
+
+    try {
+      const res = await this.postJson('https://u.y.qq.com/cgi-bin/musicu.fcg', body);
+      if (res?.req_0?.code === 0) {
+        const data = res.req_0.data;
+        const cookies = [];
+
+        if (type === 0) {
+          cookies.push(`psrf_qqopenid=${data.openid}`);
+          cookies.push(`psrf_qqrefresh_token=${data.refresh_token}`);
+          cookies.push(`psrf_qqaccess_token=${data.access_token}`);
+          cookies.push(`uin=${data.str_musicid || data.musicid || '0'}`);
+          cookies.push(`qqmusic_key=${data.musickey}`);
+          cookies.push(`qm_keyst=${data.musickey}`);
+          cookies.push(`psrf_musickey_createtime=${data.musickeyCreateTime}`);
+          cookies.push(`psrf_qqunionid=${data.unionid}`);
+          cookies.push(`euin=${data.encryptUin}`);
+          cookies.push(`login_type=1`);
+          cookies.push(`tmeLoginType=2`);
+        } else if (type === 1) {
+          cookies.push(`wxopenid=${data.openid}`);
+          cookies.push(`wxrefresh_token=${data.refresh_token}`);
+          cookies.push(`wxaccess_token=${data.access_token}`);
+          cookies.push(`wxuin=${data.str_musicid || data.musicid || '0'}`);
+          cookies.push(`qqmusic_key=${data.musickey}`);
+          cookies.push(`qm_keyst=${data.musickey}`);
+          cookies.push(`psrf_musickey_createtime=${data.musickeyCreateTime}`);
+          cookies.push(`wxunionid=${data.unionid}`);
+          cookies.push(`euin=${data.encryptUin}`);
+          cookies.push(`login_type=2`);
+          cookies.push(`tmeLoginType=1`);
+        }
+
+        result.code = 1;
+        result.data = cookies.join(';');
+      }
+    } catch (err) {
+      logger.error('[SearchMusicTool] 刷新token出错:', err);
+    }
+    return result;
   }
 }
