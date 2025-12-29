@@ -162,20 +162,30 @@ export class GoogleImageEditTool extends AbstractTool {
         return imageUrl;
     }
 
-    extractImageUrl(imageUrl) {
-        if (!imageUrl) return null;
+    extractImageUrl(content) {
+        if (!content) return null;
 
-        // 处理 base64 格式
-        if (imageUrl.includes("base64")) {
-            const segment = imageUrl.split("[image1]")[1] || imageUrl.split("[image]")[1];
-            const base64Data = segment?.split(",")[1] || imageUrl.replace(/^data:image\/\w+;base64,/, "");
-            return `base64://${base64Data}`;
+        // 匹配 Markdown 图片格式: ![xxx](url)
+        const mdMatch = content.match(/!\[.*?\]\((data:image\/[^;]+;base64,[^)]+|https?:\/\/[^)]+)\)/);
+        if (mdMatch) {
+            const url = mdMatch[1];
+            if (url.startsWith('data:image')) {
+                const base64Data = url.replace(/^data:image\/[^;]+;base64,/, '');
+                return `base64://${base64Data}`;
+            }
+            return url;
         }
 
-        // 处理 https 链接
-        if (imageUrl.includes("https")) {
-            const segment = imageUrl.split("[image1]")[1] || imageUrl.split("[image]")[1] || imageUrl.split("[Generated Image]")[1];
-            return segment?.match(/https?:\/\/[^\s)'"]+/)?.[0];
+        // 匹配纯 base64 data URI
+        const base64Match = content.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
+        if (base64Match) {
+            return `base64://${base64Match[1]}`;
+        }
+
+        // 匹配 https 链接
+        const httpsMatch = content.match(/https?:\/\/[^\s)'"<>]+\.(png|jpg|jpeg|gif|webp|bmp)[^\s)'"<>]*/i);
+        if (httpsMatch) {
+            return httpsMatch[0];
         }
 
         return null;
