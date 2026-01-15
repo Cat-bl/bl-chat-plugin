@@ -353,22 +353,35 @@ export async function getBase64Image(imageUrl, filename) {
       timeout: 15000,
       maxRedirects: 5,
       maxBodyLength: 15 * 1024 * 1024,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://qq.com'
+      validateStatus: function (status) {
+        return status >= 200 && status <= 500;
       }
     });
 
-    if (response.status >= 400) {
+    if (response?.status >= 400) {
       return "该图片链接已过期，请重新获取";
     }
 
+    // 检查是否返回了JSON错误信息(腾讯下载图床)
+    if (response.headers['content-type']?.includes('application/json')) {
+      const text = Buffer.from(response.data).toString();
+      if (text.includes('retmsg') || text.includes('expired') || text.includes('error')) {
+        return "该图片链接已过期，请重新获取";
+      }
+    }
+
     const buffer = Buffer.from(response.data);
-    const mimeType = mimeTypes.lookup(filename) || 'image/png';
-    return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    // 检查是否是有效的图片格式
+    if (!isBufferImage(buffer)) {
+      return "无效的图片格式";
+    }
+
+    const mimeType = mimeTypes.lookup(filename) || 'application/octet-stream';
+    const base64 = `data:${mimeType};base64,` + buffer.toString('base64');
+    return base64;
 
   } catch (error) {
-    console.error('图片下载失败:', error.message);
+    console.error('校验失败:', error.message);
     return "无效的图片下载链接";
   }
 }
