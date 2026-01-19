@@ -17,10 +17,10 @@ export class LikeTool extends AbstractTool {
         },
         count: {
           type: 'number',
-          description: '点赞次数(最多10次)',
-          default: 1,
+          description: '点赞次数(最多20次)',
+          default: 10,
           minimum: 1,
-          maximum: 10
+          maximum: 20
         },
         random: {
           type: 'boolean',
@@ -29,21 +29,13 @@ export class LikeTool extends AbstractTool {
         }
       }
     };
-    this.cooldown = new Map();
-    this.COOLDOWN_TIME = 60000;
   }
 
   async func(opts, e) {
-    const { qq, count = 1, random = false } = opts;
-    const MAX_LIKES = 10;  // QQ每天最大点赞次数限制
-    // 限制实际点赞次数
+    const { qq, count = 10, random = false } = opts;
+    const MAX_LIKES = 20;
     const actualCount = Math.min(count, MAX_LIKES);
-    if (count > MAX_LIKES) {
-      return {
-        status: 'rejected',
-        message: `点赞次数超过限制，每次最多只能点${MAX_LIKES}个赞哦`
-      };
-    }
+
     try {
       // 确定目标用户
       let targetQQ;
@@ -72,34 +64,26 @@ export class LikeTool extends AbstractTool {
         targetQQ = qq;
       }
 
-      // 检查冷却
-      if (!await this.checkCooldown(targetQQ)) {
+      // 执行点赞
+      const targetQQNum = Number(targetQQ);
+      const bot = e.bot ?? Bot
+      const result = await this.thumbUp(bot, targetQQNum, actualCount)
+
+      if (result.code === 0) {
         return {
-          status: 'CD',
-          target: targetQQ
+          status: 'success',
+          target: targetQQ,
+          count: actualCount,
+          isRandom: random,
+          message: result.msg
+        };
+      } else {
+        return {
+          status: 'error',
+          target: targetQQ,
+          error: result.msg || '点赞失败'
         };
       }
-
-      // 执行点赞
-      let successCount = 0;
-      const targetQQNum = Number(targetQQ);
-      for (let i = 0; i < actualCount; i++) {
-        let success = await Bot.sendLike(targetQQNum, 1);
-        if (success) successCount++;
-      }
-
-      // 如果请求的点赞数超过限制，在返回消息中说明
-      const message = count > MAX_LIKES
-        ? `已达到QQ每日点赞上限，最多只能点${MAX_LIKES}个赞哦`
-        : undefined;
-
-      return {
-        status: 'success',
-        target: targetQQ,
-        count: successCount,
-        isRandom: random,
-        message
-      };
 
     } catch (error) {
       logger.error(`[LikeTool] 点赞失败: ${error}`);
@@ -110,12 +94,52 @@ export class LikeTool extends AbstractTool {
     }
   }
 
-  async checkCooldown(userId) {
-    const lastUse = this.cooldown.get(userId);
-    if (lastUse && Date.now() - lastUse < this.COOLDOWN_TIME) {
-      return false;
+  async thumbUp(bot, uid, times = 1) {
+    try {
+      let core = bot.icqq?.core
+      if (!core) core = (await import("icqq")).core
+      if (times > 20) times = 20
+
+      let ReqFavorite
+      if (bot.fl.get(uid)) {
+        // 好友点赞
+        ReqFavorite = core.jce.encodeStruct([
+          core.jce.encodeNested([bot.uin, 1, bot.sig.seq + 1, 1, 0, Buffer.from("0C180001060131160131", "hex")]),
+          uid, 0, 1, Number(times)
+        ])
+      } else {
+        // 陌生人点赞
+        ReqFavorite = core.jce.encodeStruct([
+          core.jce.encodeNested([bot.uin, 1, bot.sig.seq + 1, 1, 0, Buffer.from("0C180001060131160135", "hex")]),
+          uid, 0, 5, Number(times)
+        ])
+      }
+
+      const body = core.jce.encodeWrapper({ ReqFavorite }, "VisitorSvc", "ReqFavorite", bot.sig.seq + 1)
+      const payload = await bot.sendUni("VisitorSvc.ReqFavorite", body)
+      let result = core.jce.decodeWrapper(payload)[0]
+      return { code: result[3], msg: result[4] }
+    } catch (error) {
+      return this.origThumbUp(bot, uid, times)
     }
-    this.cooldown.set(userId, Date.now());
-    return true;
+  }
+
+  async origThumbUp(bot, uid, times) {
+    const friend = bot.pickFriend(uid)
+    if (!friend?.thumbUp) {
+      return { code: 1, msg: "当前协议端不支持点赞" }
+    }
+    try {
+      const res = await friend.thumbUp(times)
+      if (typeof res === "boolean") {
+        return { code: res ? 0 : 1, msg: res ? "点赞成功" : "点赞失败" }
+      }
+      return { code: res.code ?? res.retcode ?? 0, msg: res.msg ?? res.message ?? "点赞成功" }
+    } catch (err) {
+      if (err?.error) {
+        return { code: err.error.code ?? err.error.retcode ?? 1, msg: err.error.msg ?? err.error.message ?? "点赞失败" }
+      }
+      return { code: 1, msg: err?.message ?? "点赞失败" }
+    }
   }
 }

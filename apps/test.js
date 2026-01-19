@@ -20,6 +20,7 @@ import { BananaTool } from "../functions/functions_tools/BananaTool.js"
 import { ReactionTool } from "../functions/functions_tools/ReactionTool.js"
 import { MemberInfoTool } from "../functions/functions_tools/MemberInfoTool.js"
 import { RecallTool } from "../functions/functions_tools/RecallTool.js"
+import { GrabRedBagTool } from "../functions/functions_tools/GrabRedBagTool.js"
 import { TakeImages } from "../utils/fileUtils.js"
 import { loadData, saveData } from "../utils/redisClient.js"
 import { YTapi } from "../utils/apiClient.js"
@@ -46,6 +47,16 @@ const EMOJI_CONFIG = {
   minDelay: 500, // 表情包发送的最小延迟（毫秒）
   maxDelay: 500 // 表情包发送的最大延迟（毫秒）
 }
+
+// 自动抢红包配置
+const RED_BAG_CONFIG = {
+  enabled: true, // 是否启用自动抢红包
+  minProbability: 0.3, // 最小触发概率
+  maxProbability: 0.8, // 最大触发概率
+  cooldownTime: 60000 // 冷却时间（毫秒），同一个群60秒内不重复触发
+}
+
+const redBagCooldowns = new Map() // 红包冷却记录: key: groupId, value: lastGrabTime
 
 const sessionStates = new Map()
 const activeConversations = new Map() // 会话追踪: key: `${groupId}_${userId}`, value: { lastActiveTime, chatHistory: [], timer: null }
@@ -88,7 +99,8 @@ function initializeSharedState(config) {
       bananaTool: new BananaTool(),
       reactionTool: new ReactionTool(),
       memberInfoTool: new MemberInfoTool(),
-      recallTool: new RecallTool()
+      recallTool: new RecallTool(),
+      grabRedBagTool: new GrabRedBagTool()
     },
     sessionMap: new Map()
   }
@@ -770,6 +782,29 @@ ${recentHistory || '(无)'}
     const messageTypes = e.message?.map(m => m.type) || []
     if (this.config.excludeMessageTypes.some(t => messageTypes.includes(t))) return false
 
+    // 检测红包消息并随机触发抢红包
+    const hasRedBag = e.message?.some(m => m.type == 'wallet')
+    if (hasRedBag && RED_BAG_CONFIG.enabled && this.config.oneapi_tools?.includes('grabRedBagTool')) {
+      const now = Date.now()
+      const lastGrabTime = redBagCooldowns.get(e.group_id) || 0
+
+      // 检查冷却时间
+      if (now - lastGrabTime >= RED_BAG_CONFIG.cooldownTime) {
+        // 随机概率
+        const probability = RED_BAG_CONFIG.minProbability +
+          Math.random() * (RED_BAG_CONFIG.maxProbability - RED_BAG_CONFIG.minProbability)
+
+        if (Math.random() < probability) {
+          redBagCooldowns.set(e.group_id, now)
+          logger.info(`[自动抢红包] 检测到红包，触发概率 ${(probability * 100).toFixed(1)}%，执行抢红包`)
+          e.forceGrabRedBag = true // 标记强制抢红包
+          return await this.handleTool(e)
+        } else {
+          logger.info(`[自动抢红包] 检测到红包，未命中概率 ${(probability * 100).toFixed(1)}%，跳过`)
+        }
+      }
+    }
+
     const hasTrigger = await this.checkTriggers(e)
 
     // 会话追踪逻辑
@@ -825,7 +860,7 @@ ${recentHistory || '(无)'}
       if (!e.group_id) await e.reply("该命令只能在群聊中使用。")
       return false
     }
-
+    
     const { group_id: groupId, user_id: userId, msg } = e
     const sessionId = randomUUID()
     e.sessionId = sessionId
@@ -974,6 +1009,12 @@ ${mcpPrompts}
       if (msg?.includes("导图") || msg?.includes("思维导图")) {
         session.tools = this.getToolsByName(["aiMindMapTool"])
         if (session.tools?.length) toolChoice = { type: "function", function: { name: "aiMindMapTool" } }
+      }
+
+      // 强制抢红包模式
+      if (e.forceGrabRedBag) {
+        session.tools = this.getToolsByName(["grabRedBagTool"])
+        if (session.tools?.length) toolChoice = { type: "function", function: { name: "grabRedBagTool" } }
       }
 
       const botMemberMap = await limit(() => e.bot.pickGroup(groupId).getMemberMap())
