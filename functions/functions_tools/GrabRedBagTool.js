@@ -2,6 +2,7 @@ import { AbstractTool } from './AbstractTool.js'
 import fs from 'fs'
 import path from 'path'
 import YAML from 'yaml'
+import { getRedBagType } from '../../utils/redBagUtils.js'
 
 /**
  * 抢红包工具类
@@ -142,8 +143,20 @@ export class GrabRedBagTool extends AbstractTool {
     }
 
     const title = walletElement.title || '红包'
+    const redBagType = getRedBagType(walletElement)
 
     try {
+      // 口令红包：先发送口令
+      if (redBagType.type === 'password' && title) {
+        try {
+          await bot.pickGroup(groupId).sendMsg(title)
+          // 等待一小段时间让服务器处理
+          await new Promise(resolve => setTimeout(resolve, 500))
+        } catch (err) {
+          console.error('发送口令失败:', err)
+        }
+      }
+
       const result = await bot.sendApi('grab_red_bag', {
         recv_uin: String(groupId),
         recv_type: 2,
