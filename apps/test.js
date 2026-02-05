@@ -1,4 +1,7 @@
 import { JinyanTool } from "../functions/functions_tools/JinyanTool.js"
+import { EmotionManager } from "../utils/EmotionManager.js"
+import { MemoryManager } from "../utils/MemoryManager.js"
+import { ExpressionLearner } from "../utils/ExpressionLearner.js"
 import { SearchInformationTool } from "../functions/functions_tools/SearchInformationTool.js"
 import { SearchVideoTool } from "../functions/functions_tools/SearchVideoTool.js"
 import { SearchMusicTool } from "../functions/functions_tools/SearchMusicTool.js"
@@ -78,6 +81,20 @@ function initializeSharedState(config) {
       groupMaxMessages: config.groupMaxMessages,
       messageMaxLength: 9999,
       cacheExpireDays: config.groupChatMemoryDays
+    }),
+    // 情感系统
+    emotionManager: new EmotionManager(config.emotionSystem || {}),
+    // 长期记忆
+    memoryManager: new MemoryManager({
+      maxFactsPerUser: config.memorySystem?.maxFactsPerUser || 100,
+      importanceThreshold: config.memorySystem?.importanceThreshold || 0.5,
+      memoryDecayDays: config.memorySystem?.memoryDecayDays || 7,
+      memoryAiConfig: config.memoryAiConfig || null
+    }),
+    // 表达学习
+    expressionLearner: new ExpressionLearner({
+      ...config.expressionLearning || {},
+      memoryAiConfig: config.memoryAiConfig || null
     }),
     toolInstances: {
       jinyanTool: new JinyanTool(),
@@ -188,6 +205,9 @@ export class ExamplePlugin extends plugin {
     this.functions = state.functions
     this.functionMap = state.functionMap
     this.sessionMap = state.sessionMap
+    this.emotionManager = state.emotionManager
+    this.memoryManager = state.memoryManager
+    this.expressionLearner = state.expressionLearner
     this.REDIS_KEY_PREFIX = 'ytbot:messages:'
 
     this.initTools()
@@ -406,11 +426,14 @@ export class ExamplePlugin extends plugin {
   mergeConfig(defaults, user) {
     const merged = { ...defaults }
     for (const key in defaults) {
-      if (typeof defaults[key] === "object" && !Array.isArray(defaults[key])) {
+      if (typeof defaults[key] === "object" && !Array.isArray(defaults[key]) && defaults[key] !== null) {
+        // 嵌套对象递归合并
         merged[key] = this.mergeConfig(defaults[key], user?.[key] || {})
-      } else {
-        merged[key] = user?.[key] ?? defaults[key]
+      } else if (user && key in user) {
+        // 用户配置中存在该字段，使用用户的值（即使是空值）
+        merged[key] = user[key]
       }
+      // 用户配置中不存在该字段，保留默认值（merged 已经有了）
     }
     return merged
   }
@@ -651,20 +674,20 @@ export class ExamplePlugin extends plugin {
               role: "system",
               content: `你是QQ群聊对话判断助手。机器人名字叫"${botName}"，QQ号${Bot.uin}。
 
-判断用户新消息是否可能在跟机器人说话。
+根据对话历史，判断用户新消息是否在继续跟机器人对话。
 
-【true的情况】
-- 话题自然延续（机器人说"中午好"→用户问"中午吃什么"）
-- 回应机器人的内容
-- 一般闲聊、提问
-- 没有明显跟其他人说话
+【判断为 true】
+- 内容是对机器人上一条回复的回应或追问
+- 话题自然延续（机器人说"中午好"→用户问"吃什么"）
+- 针对机器人之前说的内容提问
 
-【false的情况】
-- @了其他人
-- 明确叫其他人名字对话
-- 话题完全无关且明显是跟别人说的
+【判断为 false】
+- @了其他群成员
+- 明确叫其他人名字
+- 话题与之前对话完全无关
+- 明显是群里的日常闲聊/水群
 
-你只回复true或false,绝对不要输出其他内容。
+你只回复 true 或 false，不要输出其他内容。
 `
             },
             {
@@ -762,8 +785,18 @@ ${recentHistory || '(无)'}
               content: `你是QQ群聊对话判断助手。机器人名字叫"${botName}"。
 
 每条消息来自不同用户，有独立的对话历史，请分别独立判断。
-- true: 该用户在跟机器人说话（话题延续、回应机器人、一般闲聊）
-- false: 该用户在跟其他人说话（@其他人、跟别人对话、或者不是跟机器人在说话）
+
+【判断为 true】
+- 内容是对机器人上一条回复的回应或追问
+- 话题自然延续
+- 针对机器人之前说的内容提问
+
+【判断为 false】
+- @了其他群成员
+- 明确叫其他人名字
+- 话题与之前对话完全无关
+- 明显是群里的日常闲聊/水群
+- 无对话历史且消息内容与机器人无关
 
 返回JSON对象，key为消息ID，value为判断结果。
 示例: {"MSG_1_12345": true, "MSG_2_67890": false}
@@ -990,6 +1023,20 @@ ${recentHistory || '(无)'}
         message: e.msg
       })
 
+      // 获取情感、记忆、表达学习的 prompt
+      const emotionPrompt = this.config.emotionSystem?.enabled
+        ? await limit(() => this.emotionManager.getEmotionPromptForGroup(groupId))
+        : ''
+      const memoryPrompt = this.config.memorySystem?.enabled
+        ? await limit(() => this.memoryManager.getMemoryPromptForUser(groupId, userId))
+        : ''
+      const expressionPrompt = this.config.expressionLearning?.enabled
+        ? await limit(() => this.expressionLearner.getExpressionPromptForGroup(groupId))
+        : ''
+
+      // 构建增强系统提示
+      const enhancedPrompts = [emotionPrompt, memoryPrompt, expressionPrompt].filter(Boolean).join('\n')
+
       const systemContent = `
 【认知系统初始化】
 ${this.config.systemContent}
@@ -1006,7 +1053,7 @@ ${JSON.stringify({
 3.【艾特、@格式】
 @+qq号,例如@32174，@xxxxx
 
-【工具调用】
+${enhancedPrompts ? `【角色状态】\n${enhancedPrompts}\n` : ''}【工具调用】
 你是一个只负责调用工具的模型，你只负责判断当前需不需要调用工具，你不用考虑文本回复内容。
 
 ${mcpPrompts}
@@ -1532,6 +1579,36 @@ ${mcpPrompts}
     messages.push({ role: "assistant", content })
     session.groupUserMessages = this.trimMessageHistory(messages)
     await limit(() => this.saveGroupUserMessages(e.group_id, e.user_id, messages))
+
+    // 更新情感、记忆、表达学习（异步，不阻塞）
+    // 使用 e.msg 纯消息内容，而不是格式化的 userContent
+    this.updateEnhancedSystems(e, e.msg || '', content).catch(err => {
+      logger.error('[增强系统] 更新失败:', err)
+    })
+  }
+
+  /**
+   * 异步更新情感系统、长期记忆、表达学习
+   */
+  async updateEnhancedSystems(e, userMessage, botReply) {
+    const { group_id: groupId, user_id: userId } = e
+
+    // 1. 更新情感系统
+    if (this.config.emotionSystem?.enabled) {
+      const isAtBot = e.message?.some(m => m.type === 'at' && m.qq === Bot.uin)
+      await this.emotionManager.updateEmotionFromMessage(groupId, userMessage, isAtBot)
+    }
+
+    // 2. 提取并保存长期记忆（后台异步）
+    if (this.config.memorySystem?.enabled && this.config.memoryAiConfig) {
+      // 不 await，让它在后台执行
+      this.memoryManager.extractAndSaveMemories(groupId, userId, userMessage, botReply)
+    }
+
+    // 3. 更新表达学习
+    if (this.config.expressionLearning?.enabled) {
+      await this.expressionLearner.updateGroupExpressions(groupId, userMessage)
+    }
   }
 
   async sendSegmentedMessage(e, output, quoteChance = 0.5) {

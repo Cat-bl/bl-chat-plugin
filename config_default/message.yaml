@@ -53,6 +53,31 @@ pluginSettings:
     searchApiModel: deepseek-r1-search,
     searchApiKey: sk-xxxxx
   }
+  memoryAiConfig: {
+    memoryAiUrl: https://api.openai.com/v1/chat/completions,
+    memoryAiModel: gpt-4o-mini,
+    memoryAiApikey: sk-xxxxx
+  }
+  emotionSystem:
+    enabled: true
+    decayRate: 0.02
+    eventWeights:
+      praised: 0.1
+      scolded: -0.15
+      ignored: -0.05
+      mentioned: 0.05
+  memorySystem:
+    enabled: false
+    maxFactsPerUser: 100
+    importanceThreshold: 0.5
+    memoryDecayDays: 7
+  expressionLearning:
+    enabled: true
+    minWordFrequency: 3
+    maxWords: 50
+    blockedWords: []
+    aiLearningEnabled: true
+    aiLearningMessageThreshold: 100
   openai_tool_choice: auto
   oneapi_tools:
     - likeTool

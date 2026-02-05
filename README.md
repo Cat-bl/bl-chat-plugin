@@ -87,6 +87,86 @@ systemPrompt: |
 
 ---
 
+## 增强系统（情感/记忆/表达学习）
+
+### 情感系统 (`emotionSystem`)
+
+让机器人拥有情绪状态，根据对话内容调整回复风格。**每个群独立**。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `enabled` | boolean | `true` | **情感系统开关** |
+| `decayRate` | float | `0.02` | **衰减速率**：情绪每小时向中性回归的幅度 |
+| `eventWeights.praised` | float | `0.1` | 被夸奖时心情提升值 |
+| `eventWeights.scolded` | float | `-0.15` | 被骂时心情下降值 |
+| `eventWeights.mentioned` | float | `0.05` | 被@时心情提升值 |
+
+**效果示例**：
+- 连续被夸奖 → 回复变得活泼开朗
+- 被骂/负面词 → 回复变得简短冷淡
+- 长时间无互动 → 情绪自动恢复中性
+
+---
+
+### 长期记忆系统 (`memorySystem`)
+
+让机器人记住用户的喜好、身份等信息，按类别分组存储。**每个群的每个用户独立**。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `enabled` | boolean | `false` | **长期记忆开关** |
+| `maxFactsPerUser` | int | `100` | **每用户最大记忆条数**（所有类别总计） |
+| `importanceThreshold` | float | `0.5` | **重要性阈值**：低于此值的记忆会被遗忘 |
+| `memoryDecayDays` | int | `7` | **记忆衰减天数**：超过此天数未使用的记忆会降低重要性 |
+
+> **重要提示**：开启长期记忆系统需要配置 `memoryAiConfig`，用于调用 AI 提取值得记忆的信息。
+
+**记忆分类**：提取的记忆会自动归类到以下类别：
+- `identity` 身份（职业、学历、性别、所在地）
+- `likes` 喜好（兴趣、喜欢的游戏/食物等）
+- `dislikes` 讨厌（不喜欢的事物）
+- `relationship` 关系（感情状态、家庭、宠物）
+- `habits` 习惯（作息、饮食、行为）
+- `skills` 技能（擅长的事）
+- `experience` 经历（重要事件）
+
+**效果示例**：
+- 用户说"我是程序员，喜欢原神，养了只猫叫咪咪"
+- prompt 注入：`【用户身份】程序员` `【用户喜好】原神` `【用户关系】养了只猫叫咪咪`
+- 之后问"我喜欢什么游戏" → 机器人能回忆起来
+
+---
+
+### 表达学习系统 (`expressionLearning`)
+
+让机器人学习群友的说话风格。支持 AI 场景化学习和词频统计两种模式。**每个群独立**。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `enabled` | boolean | `true` | **表达学习开关** |
+| `minWordFrequency` | int | `3` | **最小词频**：词汇出现至少几次才记录 |
+| `maxWords` | int | `50` | **最大词汇数**：每群最多记录多少个高频词 |
+| `blockedWords` | string[] | `[]` | **屏蔽词列表**：不学习这些词 |
+| `aiLearningEnabled` | boolean | `true` | **AI 场景化学习开关**：使用 AI 提取表达模式 |
+| `aiLearningMessageThreshold` | int | `100` | **AI 学习消息阈值**：积累多少条消息后触发一次 AI 学习 |
+
+> **说明**：AI 场景化学习复用 `memoryAiConfig` 配置。如果未配置 `memoryAiConfig`，则自动降级为词频统计模式。
+
+**效果示例**（AI 场景化学习）：
+- 群友常用"绝绝子"表示赞叹、"笑死"表示无语
+- prompt 注入：
+  ```
+  【群聊表达风格】
+  - 表示赞叹时，群友常说"绝绝子"、"yyds"、"牛"
+  - 表示无语时，群友常说"笑死"、"绷不住"
+  ```
+
+**效果示例**（词频统计兜底）：
+- 如果未触发 AI 学习，则使用词频统计
+- prompt 注入：`【群里常用词】绝绝子、yyds、笑死`
+
+---
+
 ## 触发机制
 
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -184,6 +264,18 @@ searchApiUrl: "https://api.openai.com/v1/chat/completions"
 searchApiModel: "deepseek-r1-search"
 searchApiKey: "sk-xxxxx"
 ```
+
+### 记忆提取模型配置 (`memoryAiConfig`)
+
+> ⚠️ **仅在开启 `memorySystem.enabled: true` 时需要配置**
+
+```yaml
+memoryAiUrl: "https://api.openai.com/v1/chat/completions"
+memoryAiModel: "gpt-4o-mini"    # 推荐使用小模型，省钱且响应快
+memoryAiApikey: "sk-xxxxx"
+```
+
+**说明**：每次对话后会异步调用此模型，提取用户消息中值得记忆的信息（如喜好、身份等）。推荐使用 `gpt-4o-mini`、`gemini-2.0-flash` 等小模型。
 
 ### 启用工具列表 (`oneapi_tools`)
 ```yaml
