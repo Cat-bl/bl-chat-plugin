@@ -16,7 +16,7 @@ export class JinyanTool extends AbstractTool {
           items: {
             type: 'string'
           },
-          description: '目标用户的QQ号、群名片或昵称数组，支持单个或多个用户'
+          description: '目标用户的QQ号、群名片或昵称数组，支持单个或多个用户(注意：只填写纯用户名，不要包含时间、数量等描述词（如"一分钟"、"1分钟"）例:当说禁言西狗狗一分钟时，实际的参数应是西狗狗，而不是西狗狗一或者西狗狗1)'
         },
         time: {
           type: 'number',
@@ -28,11 +28,6 @@ export class JinyanTool extends AbstractTool {
           description: '是否随机选择群成员操作',
           default: false
         },
-        senderRole: {
-          type: 'string',
-          description: '发送者角色(owner/admin/member)',
-          default: 'member'
-        },
         confirm: {
           type: 'boolean',
           description: '是否确认执行全体禁言',
@@ -40,12 +35,26 @@ export class JinyanTool extends AbstractTool {
         },
         selfDecision: {
           type: 'boolean',
-          description: '是否为机器人自主决定的禁言操作，为true时跳过发送者权限检查',
+          description: '是否为你根据违规行为自主判断的禁言。true=你主动发现违规(如辱骂、刷屏、敏感话题)而决定禁言；false=被用户要求禁言某人。注意：当selfDecision为false时，只有管理员/群主的命令才会执行',
           default: false
         }
       },
-      required: ['senderRole']
+      required: []
     };
+  }
+
+  /**
+   * 清理目标字符串中的时间后缀
+   * @param {string} target - 原始目标字符串
+   * @returns {string} - 清理后的字符串
+   */
+  cleanTarget(target) {
+    if (!target) return target
+    // 移除常见的时间后缀：一、1、一分钟、1分钟、十分钟、10分钟等
+    return target
+      .replace(/[一二三四五六七八九十百千]+[分秒小时天]?[钟]?$/, '')
+      .replace(/\d+[分秒小时天]?[钟]?$/, '')
+      .trim()
   }
 
   /**
@@ -55,21 +64,37 @@ export class JinyanTool extends AbstractTool {
    * @returns {Object|null} - 找到的成员信息或null
    */
   findMember(target, members) {
-    // 首先尝试作为QQ号查找
-    if (/^\d+$/.test(target)) {
-      const member = members.get(Number(target));
-      if (member) return { qq: Number(target), info: member };
-    }
+    // 先清理目标字符串
+    const cleanedTarget = this.cleanTarget(target)
+    const searchTargets = [target, cleanedTarget].filter(Boolean)
 
-    // 按群名片或昵称查找
-    for (const [qq, info] of members.entries()) {
-      const card = info.card?.toLowerCase();
-      const nickname = info.nickname?.toLowerCase();
-      const searchTarget = target.toLowerCase();
-      
-      if (card === searchTarget || nickname === searchTarget ||
-          card?.includes(searchTarget) || nickname?.includes(searchTarget)) {
-        return { qq, info };
+    for (const searchTarget of searchTargets) {
+      // 首先尝试作为QQ号查找
+      if (/^\d+$/.test(searchTarget)) {
+        const member = members.get(Number(searchTarget));
+        if (member) return { qq: Number(searchTarget), info: member };
+      }
+
+      // 按群名片或昵称精确匹配
+      const search = searchTarget.toLowerCase();
+      for (const [qq, info] of members.entries()) {
+        const card = info.card?.toLowerCase();
+        const nickname = info.nickname?.toLowerCase();
+
+        if (card === search || nickname === search) {
+          return { qq, info };
+        }
+      }
+
+      // 按群名片或昵称模糊匹配
+      for (const [qq, info] of members.entries()) {
+        const card = info.card?.toLowerCase();
+        const nickname = info.nickname?.toLowerCase();
+
+        if (card?.includes(search) || nickname?.includes(search) ||
+            search.includes(card) || search.includes(nickname)) {
+          return { qq, info };
+        }
       }
     }
     return null;
@@ -114,9 +139,9 @@ export class JinyanTool extends AbstractTool {
 
     const groupId = e.group_id;
 
-    // 权限检查（selfDecision为true时跳过）
+    // 权限检查：普通用户不能命令机器人禁言，除非机器人自主决定
     if (!selfDecision && !['owner', 'admin'].includes(senderRole)) {
-      return '用户不是群主或管理员,无权限命令你执行禁言操作';
+      return '该群员不是群主或管理员，无权命令我执行禁言操作';
     }
 
     // 获取群对象

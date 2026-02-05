@@ -999,17 +999,7 @@ ${recentHistory || '(无)'}
           return await e.bot.pickGroup(groupId).pickMember(e.sender.user_id).info
         } catch { return {} }
       })
-      const senderRole = roleMap[memberInfo?.role] || "member"
-
-      let targetRole = "member"
-      if (atQq.length > 0) {
-        await limit(async () => {
-          try {
-            const memberMap = await e.bot.pickGroup(groupId).getMemberMap()
-            targetRole = roleMap[memberMap.get(Number(atQq[0]))?.role] || "member"
-          } catch { }
-        })
-      }
+      const senderRole = roleMap[e.sender?.role] || roleMap[memberInfo?.role] || "member"
 
       const userContent = await limit(() => this.buildMessageContent(e.sender, args, images, atQq, e.group, e))
 
@@ -1161,7 +1151,7 @@ ${mcpPrompts}
       const message = response.choices[0].message || {}
 
       if (message.tool_calls?.length) {
-        await this.processToolCalls(message, e, session, session.groupUserMessages, atQq, senderRole, targetRole, limit)
+        await this.processToolCalls(message, e, session, session.groupUserMessages, atQq, senderRole, limit)
       } else if (message.content) {
         await this.handleTextResponse(message.content, e, session, session.groupUserMessages, limit)
       }
@@ -1285,7 +1275,7 @@ ${mcpPrompts}
   /**
    * 处理工具调用 - 支持多轮工具调用
    */
-  async processToolCalls(message, e, session, groupUserMessages, atQq, senderRole, targetRole, limit) {
+  async processToolCalls(message, e, session, groupUserMessages, atQq, senderRole, limit) {
     const MAX_TOOL_ROUNDS = this.config.maxToolRounds
     let currentMessage = message
     let currentMessages = [...groupUserMessages]
@@ -1326,7 +1316,6 @@ ${mcpPrompts}
         if (isLocalTool) {
           if (toolName === "jinyanTool") {
             if (senderRole) params.senderRole = senderRole
-            if (targetRole) params.targetRole = targetRole
           }
         }
 
