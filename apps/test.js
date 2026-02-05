@@ -875,6 +875,11 @@ ${recentHistory || '(无)'}
     const messageTypes = e.message?.map(m => m.type) || []
     if (this.config.excludeMessageTypes.some(t => messageTypes.includes(t))) return false
 
+    // 静默收集消息用于表达学习（不管是否触发AI对话）
+    if (this.config.expressionLearning?.enabled && e.msg) {
+      this.expressionLearner.updateGroupExpressions(e.group_id, e.msg).catch(() => {})
+    }
+
     // 检测红包消息并随机触发抢红包
     const walletSeg = e.message?.find(m => m.type == 'wallet')
     if (walletSeg && RED_BAG_CONFIG.enabled && this.config.oneapi_tools?.includes('grabRedBagTool')) {
@@ -1588,7 +1593,7 @@ ${mcpPrompts}
   }
 
   /**
-   * 异步更新情感系统、长期记忆、表达学习
+   * 异步更新情感系统、长期记忆
    */
   async updateEnhancedSystems(e, userMessage, botReply) {
     const { group_id: groupId, user_id: userId } = e
@@ -1605,10 +1610,7 @@ ${mcpPrompts}
       this.memoryManager.extractAndSaveMemories(groupId, userId, userMessage, botReply)
     }
 
-    // 3. 更新表达学习
-    if (this.config.expressionLearning?.enabled) {
-      await this.expressionLearner.updateGroupExpressions(groupId, userMessage)
-    }
+    // 表达学习已移至 handleRandomReply 静默收集，不在此处调用
   }
 
   async sendSegmentedMessage(e, output, quoteChance = 0.5) {
