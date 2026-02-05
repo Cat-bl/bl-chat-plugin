@@ -148,7 +148,7 @@ systemPrompt: |
 | `maxWords` | int | `50` | **最大词汇数**：每群最多记录多少个高频词 |
 | `blockedWords` | string[] | `[]` | **屏蔽词列表**：不学习这些词 |
 | `aiLearningEnabled` | boolean | `true` | **AI 场景化学习开关**：使用 AI 提取表达模式 |
-| `aiLearningMessageThreshold` | int | `30` | **AI 学习消息阈值**：积累多少条消息后触发一次 AI 学习 |
+| `aiLearningMessageThreshold` | int | `50` | **AI 学习消息阈值**：积累多少条消息后触发一次 AI 学习 |
 
 > **说明**：AI 场景化学习复用 `memoryAiConfig` 配置。如果未配置 `memoryAiConfig`，则自动降级为词频统计模式。
 

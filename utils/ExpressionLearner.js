@@ -10,7 +10,7 @@ export class ExpressionLearner {
       maxWords: config.maxWords || 50,
       blockedWords: config.blockedWords || [],
       aiLearningEnabled: config.aiLearningEnabled !== false,
-      aiLearningMessageThreshold: config.aiLearningMessageThreshold || 100,
+      aiLearningMessageThreshold: config.aiLearningMessageThreshold || 50,
       memoryAiConfig: config.memoryAiConfig || null
     }
 

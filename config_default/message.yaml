@@ -77,7 +77,7 @@ pluginSettings:
     maxWords: 50
     blockedWords: []
     aiLearningEnabled: true
-    aiLearningMessageThreshold: 30
+    aiLearningMessageThreshold: 50
   openai_tool_choice: auto
   oneapi_tools:
     - likeTool
