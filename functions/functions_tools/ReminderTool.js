@@ -1,6 +1,9 @@
 import { AbstractTool } from './AbstractTool.js'
 import { mcpManager } from '../../utils/MCPClient.js'
 
+// 内存缓存原始 e 对象，重启后丢失则降级用 fakeEvent
+const eventCache = new Map()
+
 const REDIS_KEY_PREFIX = 'bl-chat:reminder:'
 const PENDING_LIST_KEY = `${REDIS_KEY_PREFIX}pending:list`
 const LOCK_KEY = `${REDIS_KEY_PREFIX}lock`
@@ -203,6 +206,7 @@ export class ReminderTool extends AbstractTool {
     }
 
     const reminderId = this.generateId(e.user_id)
+    eventCache.set(reminderId, e)
     const reminderData = {
       id: reminderId,
       user_id: String(e.user_id),
@@ -250,6 +254,7 @@ export class ReminderTool extends AbstractTool {
 
       return response
     } catch (error) {
+      eventCache.delete(reminderId)
       logger.error('[ReminderTool] 创建提醒失败:', error)
       return `创建提醒失败：${error.message}`
     }
@@ -332,6 +337,7 @@ export class ReminderTool extends AbstractTool {
 
       // 删除 detail 数据（清理垃圾）
       await redis.del(this.getRedisKey('detail', reminderId))
+      eventCache.delete(reminderId)
 
       return `已取消提醒：${reminder.content}`
     } catch (error) {
@@ -485,8 +491,9 @@ async function triggerReminder(reminderId, toolInstances) {
       const { tool, params } = reminder.extra_action
 
       try {
-        // 构建更完整的事件对象
-        const fakeEvent = {
+        // 优先使用内存缓存的原始 e，重启后降级构造 fakeEvent
+        const cachedEvent = eventCache.get(reminderId)
+        const fakeEvent = cachedEvent || {
           group_id: reminder.group_id ? Number(reminder.group_id) : null,
           user_id: Number(reminder.user_id),
           sender: {
@@ -496,7 +503,11 @@ async function triggerReminder(reminderId, toolInstances) {
           message_type: reminder.group_id ? 'group' : 'private',
           self_id: Bot?.uin,
           bot: Bot,
-          group: reminder.group_id ? Bot?.pickGroup?.(Number(reminder.group_id)) : null
+          group: reminder.group_id ? Bot?.pickGroup?.(Number(reminder.group_id)) : null,
+          isGroup: !!reminder.group_id,
+          reply: reminder.group_id
+            ? Bot?.pickGroup?.(Number(reminder.group_id))?.sendMsg?.bind(Bot.pickGroup(Number(reminder.group_id)))
+            : Bot?.pickFriend?.(Number(reminder.user_id))?.sendMsg?.bind(Bot.pickFriend(Number(reminder.user_id)))
         }
 
         // 合并用户 QQ 到 params（如 pokeTool 需要 target）
@@ -574,6 +585,8 @@ async function triggerReminder(reminderId, toolInstances) {
         // 忽略删除失败
       }
     }, 60000)
+
+    eventCache.delete(reminderId)
 
     return true
 
