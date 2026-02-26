@@ -294,6 +294,19 @@ export class MemoryManager {
   }
 
   /**
+   * 获取已有记忆的内容列表（用于去重提示）
+   */
+  getExistingFactsList(categorizedFacts, categories) {
+    const facts = []
+    for (const cat of categories) {
+      for (const f of categorizedFacts?.[cat] || []) {
+        facts.push(f.content)
+      }
+    }
+    return facts
+  }
+
+  /**
    * 更新亲密度
    */
   async updateRelationship(groupId, userId, delta) {
@@ -386,6 +399,13 @@ export class MemoryManager {
         return
       }
 
+      // 获取已有记忆用于去重
+      const memory = await this.getUserMemory(groupId, userId)
+      const existingFacts = this.getExistingFactsList(memory.categorizedFacts, this.CATEGORIES)
+      const existingHint = existingFacts.length
+        ? `\n\n【已有记忆，不要重复提取】\n${existingFacts.join('、')}`
+        : ''
+
       const response = await fetch(memoryAiUrl, {
         method: 'POST',
         headers: {
@@ -433,7 +453,7 @@ export class MemoryManager {
             },
             {
               role: 'user',
-              content: `用户消息：${userMessage}\n\n请提取值得记忆的信息：`
+              content: `用户消息：${userMessage}${existingHint}\n\n请提取值得记忆的新信息：`
             }
           ],
           temperature: 0.3,
@@ -646,13 +666,30 @@ export class MemoryManager {
 
   /**
    * 使用 AI 从对话中提取群级别信息
+   * @param {string} groupId - 群号
+   * @param {Array} chatHistory - 群聊天记录数组 [{role, content}]
    */
-  async extractAndSaveGroupMemories(groupId, userMessage, senderName) {
+  async extractAndSaveGroupMemories(groupId, chatHistory = []) {
     if (!this.config.memoryAiConfig) return
 
     try {
       const { memoryAiUrl, memoryAiModel, memoryAiApikey } = this.config.memoryAiConfig
       if (!memoryAiUrl || !memoryAiApikey) return
+
+      // 将聊天记录拼接为文本，最多取最近20条
+      const recentMessages = chatHistory.slice(-20)
+      const chatText = recentMessages
+        .map(m => m.content)
+        .join('\n')
+
+      if (!chatText.trim()) return
+
+      // 获取已有群记忆用于去重
+      const groupMemory = await this.getGroupMemory(groupId)
+      const existingFacts = this.getExistingFactsList(groupMemory.categorizedFacts, this.GROUP_CATEGORIES)
+      const existingHint = existingFacts.length
+        ? `\n\n【已有群记忆，不要重复提取】\n${existingFacts.join('、')}`
+        : ''
 
       const response = await fetch(memoryAiUrl, {
         method: 'POST',
@@ -699,11 +736,11 @@ export class MemoryManager {
             },
             {
               role: 'user',
-              content: `发言者: ${senderName || '未知'}\n消息内容：${userMessage}\n\n请提取值得记忆的群级别信息：`
+              content: `以下是最近的群聊记录：\n${chatText}${existingHint}\n\n请从以上群聊中提取值得记忆的群级别新信息：`
             }
           ],
           temperature: 0.3,
-          max_tokens: 300
+          max_tokens: 500
         })
       })
 

@@ -1622,9 +1622,14 @@ ${mcpPrompts}
     if (this.config.memorySystem?.enabled && this.config.memoryAiConfig) {
       // 不 await，让它在后台执行
       this.memoryManager.extractAndSaveMemories(groupId, userId, userMessage, botReply)
-      // 提取群全局记忆
+      // 提取群全局记忆（传入聊天记录）
       if (groupId) {
-        this.memoryManager.extractAndSaveGroupMemories(groupId, userMessage, e.sender?.nickname)
+        const history = await this.messageManager.getMessages('group', groupId)
+        const chatHistory = (history || []).slice(-20).map(msg => ({
+          role: msg.sender?.user_id === Bot.uin ? 'assistant' : 'user',
+          content: `${msg.sender?.nickname || '未知'}(QQ:${msg.sender?.user_id}): ${msg.content}`
+        }))
+        this.memoryManager.extractAndSaveGroupMemories(groupId, chatHistory)
       }
     }
 
