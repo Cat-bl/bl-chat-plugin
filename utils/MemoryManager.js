@@ -7,6 +7,7 @@ export class MemoryManager {
     this.REDIS_PREFIX = 'ytbot:memory:'
     this.config = {
       maxFactsPerUser: config.maxFactsPerUser || 100,
+      maxFactsPerGroup: config.maxFactsPerGroup || 50,
       importanceThreshold: config.importanceThreshold || 0.5,
       memoryDecayDays: config.memoryDecayDays || 7,
       memoryAiConfig: config.memoryAiConfig || null
@@ -24,6 +25,18 @@ export class MemoryManager {
       habits: '用户习惯',
       skills: '用户技能',
       experience: '用户经历'
+    }
+
+    // 群全局记忆类别
+    this.GROUP_CATEGORIES = ['topic', 'rule', 'meme', 'event', 'member']
+
+    // 群全局记忆类别中文映射
+    this.GROUP_CATEGORY_LABELS = {
+      topic: '群话题偏好',
+      rule: '群规/约定',
+      meme: '群内梗/流行语',
+      event: '群内重要事件',
+      member: '群成员共识'
     }
 
     this.defaultMemory = {
@@ -384,30 +397,36 @@ export class MemoryManager {
           messages: [
             {
               role: 'system',
-              content: `你是记忆提取助手，从用户消息中提取值得长期记住的个人信息。
+              content: `你是记忆提取助手，从用户消息中尽可能多地提取值得记住的个人信息。宁可多提取也不要遗漏。
 
 【提取类型与分类】
-- identity: 身份（职业、学历、年龄段、性别、所在地）
-- likes: 喜欢的事物（兴趣、爱好、喜欢的游戏/食物等）
-- dislikes: 讨厌的事物（不喜欢的东西）
-- relationship: 人际关系（感情状态、家庭成员、宠物）
-- habits: 习惯（作息、饮食、行为模式）
-- skills: 技能（擅长的事）
-- experience: 经历/事件（重要事件）
+- identity: 身份（职业、学历、年龄段、性别、所在地、名字/网名）
+- likes: 喜欢的事物（兴趣、爱好、喜欢的游戏/动漫/音乐/食物/人物等）
+- dislikes: 讨厌的事物（不喜欢的东西、反感的事）
+- relationship: 人际关系（感情状态、家庭成员、宠物、朋友）
+- habits: 习惯（作息、饮食、口头禅、行为模式、消费习惯）
+- skills: 技能（擅长的事、在学的东西）
+- experience: 经历/事件（近期发生的事、过去的重要经历、计划要做的事）
+
+【积极提取以下内容】
+- 用户提到的任何个人信息、偏好、观点
+- 用户的情绪倾向和态度（如"讨厌加班"、"最近很开心"）
+- 用户的近况和计划（如"下周要考试"、"最近在学日语"）
+- 用户提到的人际关系（如"我女朋友"、"我室友"）
+- 用户的日常习惯（如"每天跑步"、"熬夜党"）
 
 【不要提取】
-- 临时状态：今天很累、正在吃饭、刚睡醒
-- 普通闲聊：哈哈、好的、emmm
-- 提问内容：用户问的问题本身
+- 纯粹的语气词：哈哈、好的、emmm、嗯嗯
+- 对机器人的提问本身（如"你觉得呢"）
 
 【重要性评分】
-- 0.9-1.0：核心身份（职业、性别、所在城市）
-- 0.7-0.8：稳定喜好（长期兴趣、讨厌的事物）
-- 0.5-0.6：一般信息（习惯、技能）
+- 0.8-1.0：核心身份（职业、性别、所在城市、名字）
+- 0.6-0.8：喜好和关系（兴趣、讨厌的事、家人朋友宠物）
+- 0.4-0.6：一般信息（近况、习惯、计划、观点）
 
 【输出格式】
 - 用简洁的陈述句，如"程序员"而不是"用户是一个程序员"
-- 返回 JSON 数组：[{"content": "信息", "category": "分类", "importance": 0.8}]
+- 返回 JSON 数组：[{"content": "信息", "category": "分类", "importance": 0.7}]
 - category 必须是以上7个分类之一
 - 无有效信息时返回 []
 - 只输出 JSON，不要其他内容`
@@ -439,7 +458,7 @@ export class MemoryManager {
 
       if (Array.isArray(memories) && memories.length > 0) {
         for (const mem of memories) {
-          if (mem.content && mem.importance >= 0.5) {
+          if (mem.content && mem.importance >= 0.3) {
             const category = this.CATEGORIES.includes(mem.category) ? mem.category : 'identity'
             await this.addMemory(groupId, userId, mem.content, mem.importance, category)
           }
@@ -448,6 +467,272 @@ export class MemoryManager {
       }
     } catch (error) {
       logger.error(`[长期记忆] 提取记忆失败: ${error}`)
+    }
+  }
+
+  // ==================== 群全局记忆 ====================
+
+  /**
+   * 获取群全局记忆 Redis Key
+   */
+  getGroupRedisKey(groupId) {
+    return `${this.REDIS_PREFIX}group:${groupId}`
+  }
+
+  /**
+   * 创建空的群全局记忆分类结构
+   */
+  createEmptyGroupCategorizedFacts() {
+    const facts = {}
+    for (const cat of this.GROUP_CATEGORIES) {
+      facts[cat] = []
+    }
+    return facts
+  }
+
+  /**
+   * 获取群全局记忆
+   */
+  async getGroupMemory(groupId) {
+    try {
+      const key = this.getGroupRedisKey(groupId)
+      const data = await redis.get(key)
+
+      if (data) {
+        let memory = JSON.parse(data)
+        if (!memory.categorizedFacts) {
+          memory.categorizedFacts = this.createEmptyGroupCategorizedFacts()
+        }
+        for (const cat of this.GROUP_CATEGORIES) {
+          if (!memory.categorizedFacts[cat]) {
+            memory.categorizedFacts[cat] = []
+          }
+        }
+        return this.applyGroupMemoryDecay(memory)
+      }
+
+      return { categorizedFacts: this.createEmptyGroupCategorizedFacts(), lastUpdate: Date.now() }
+    } catch (error) {
+      logger.error(`[群全局记忆] 获取记忆失败: ${error}`)
+      return { categorizedFacts: this.createEmptyGroupCategorizedFacts(), lastUpdate: Date.now() }
+    }
+  }
+
+  /**
+   * 保存群全局记忆
+   */
+  async saveGroupMemory(groupId, memory) {
+    try {
+      const key = this.getGroupRedisKey(groupId)
+      memory.lastUpdate = Date.now()
+      await redis.set(key, JSON.stringify(memory), { EX: 90 * 24 * 60 * 60 })
+    } catch (error) {
+      logger.error(`[群全局记忆] 保存记忆失败: ${error}`)
+    }
+  }
+
+  /**
+   * 应用群全局记忆衰减
+   */
+  applyGroupMemoryDecay(memory) {
+    const now = Date.now()
+    const decayThreshold = this.config.memoryDecayDays * 24 * 60 * 60 * 1000
+
+    for (const cat of this.GROUP_CATEGORIES) {
+      if (!memory.categorizedFacts[cat]) continue
+
+      memory.categorizedFacts[cat] = memory.categorizedFacts[cat]
+        .map(fact => {
+          const timeSinceUsed = now - (fact.lastUsed || fact.createdAt)
+          if (timeSinceUsed > decayThreshold) {
+            const decayPeriods = Math.floor(timeSinceUsed / decayThreshold)
+            fact.importance = Math.max(0.1, fact.importance - decayPeriods * 0.1)
+          }
+          return fact
+        })
+        .filter(fact => fact.importance >= this.config.importanceThreshold)
+    }
+
+    return memory
+  }
+
+  /**
+   * 添加群全局记忆
+   */
+  async addGroupMemory(groupId, content, importance = 0.6, category = 'topic') {
+    try {
+      const memory = await this.getGroupMemory(groupId)
+
+      if (!this.GROUP_CATEGORIES.includes(category)) {
+        category = 'topic'
+      }
+
+      const categoryFacts = memory.categorizedFacts[category]
+      const existingIndex = categoryFacts.findIndex(f =>
+        this.isSimilarContent(f.content, content)
+      )
+
+      const now = Date.now()
+
+      if (existingIndex >= 0) {
+        categoryFacts[existingIndex].importance = Math.min(1, categoryFacts[existingIndex].importance + 0.1)
+        categoryFacts[existingIndex].lastUsed = now
+        logger.debug(`[群全局记忆] 更新已有记忆 [${category}]: ${content}`)
+      } else {
+        categoryFacts.push({ content, importance, createdAt: now, lastUsed: now })
+        logger.info(`[群全局记忆] 新增记忆 [${category}]: ${content} (重要性: ${importance})`)
+      }
+
+      categoryFacts.sort((a, b) => b.importance - a.importance)
+      this.trimGroupTotalFacts(memory)
+      await this.saveGroupMemory(groupId, memory)
+      return true
+    } catch (error) {
+      logger.error(`[群全局记忆] 添加记忆失败: ${error}`)
+      return false
+    }
+  }
+
+  /**
+   * 控制群全局记忆总数不超过上限
+   */
+  trimGroupTotalFacts(memory) {
+    let total = 0
+    for (const cat of this.GROUP_CATEGORIES) {
+      total += (memory.categorizedFacts[cat]?.length || 0)
+    }
+
+    if (total <= this.config.maxFactsPerGroup) return
+
+    const allFacts = []
+    for (const cat of this.GROUP_CATEGORIES) {
+      for (const fact of memory.categorizedFacts[cat]) {
+        allFacts.push({ ...fact, _category: cat })
+      }
+    }
+    allFacts.sort((a, b) => a.importance - b.importance)
+
+    const toRemove = total - this.config.maxFactsPerGroup
+    const removeSet = new Set(allFacts.slice(0, toRemove).map(f => `${f._category}:${f.content}`))
+
+    for (const cat of this.GROUP_CATEGORIES) {
+      memory.categorizedFacts[cat] = memory.categorizedFacts[cat]
+        .filter(f => !removeSet.has(`${cat}:${f.content}`))
+    }
+  }
+
+  /**
+   * 生成群全局记忆 prompt
+   */
+  async getGroupMemoryPrompt(groupId) {
+    const memory = await this.getGroupMemory(groupId)
+    const prompts = []
+
+    for (const cat of this.GROUP_CATEGORIES) {
+      const facts = memory.categorizedFacts?.[cat]
+      if (!facts?.length) continue
+
+      const topFacts = facts
+        .sort((a, b) => b.importance - a.importance)
+        .slice(0, 5)
+        .map(f => f.content)
+
+      prompts.push(`【${this.GROUP_CATEGORY_LABELS[cat]}】${topFacts.join('、')}`)
+    }
+
+    if (!prompts.length) return ''
+    return `【群共识记忆】\n${prompts.join('\n')}`
+  }
+
+  /**
+   * 使用 AI 从对话中提取群级别信息
+   */
+  async extractAndSaveGroupMemories(groupId, userMessage, senderName) {
+    if (!this.config.memoryAiConfig) return
+
+    try {
+      const { memoryAiUrl, memoryAiModel, memoryAiApikey } = this.config.memoryAiConfig
+      if (!memoryAiUrl || !memoryAiApikey) return
+
+      const response = await fetch(memoryAiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${memoryAiApikey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: memoryAiModel || 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: `你是群记忆提取助手，从群聊消息中尽可能多地提取值得记住的群级别信息。宁可多提取也不要遗漏。
+
+【提取类型与分类】
+- topic: 群话题偏好（群里在讨论什么话题、关注什么领域）
+- rule: 群规/约定（群内的规则、共识、约定）
+- meme: 群内梗/流行语（群里流行的梗、口头禅、玩笑、表情包含义）
+- event: 群内事件（群活动、发生的事情、值得纪念的瞬间）
+- member: 群成员相关（某人的特点、昵称、擅长的事、人物关系）
+
+【积极提取以下内容】
+- 群友讨论的任何具体话题和领域
+- 群友之间的互动关系、称呼
+- 群里反复出现的梗、流行语、口头禅
+- 群友提到的群内事件、约定
+- 对某个群成员的评价或共识（如"xx很会做饭"）
+- 群友共同的兴趣和喜好
+
+【不要提取】
+- 纯粹的语气词：哈哈、好的、emmm、嗯嗯
+- 与群无关的纯个人私密信息
+
+【重要性评分】
+- 0.8-1.0：群规、长期共识、群成员公认特点
+- 0.6-0.8：群内梗、话题偏好、群成员关系
+- 0.4-0.6：一般话题、临时事件
+
+【输出格式】
+- 返回 JSON 数组：[{"content": "信息", "category": "分类", "importance": 0.7}]
+- category 必须是以上5个分类之一
+- 无有效信息时返回 []
+- 只输出 JSON，不要其他内容`
+            },
+            {
+              role: 'user',
+              content: `发言者: ${senderName || '未知'}\n消息内容：${userMessage}\n\n请提取值得记忆的群级别信息：`
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 300
+        })
+      })
+
+      if (!response.ok) {
+        logger.error(`[群全局记忆] AI 请求失败: ${response.status}`)
+        return
+      }
+
+      const data = await response.json()
+      let content = data?.choices?.[0]?.message?.content?.trim() || '[]'
+
+      const jsonMatch = content.match(/\[[\s\S]*\]/)
+      if (jsonMatch) {
+        content = jsonMatch[0]
+      }
+
+      const memories = JSON.parse(content)
+
+      if (Array.isArray(memories) && memories.length > 0) {
+        for (const mem of memories) {
+          if (mem.content && mem.importance >= 0.3) {
+            const category = this.GROUP_CATEGORIES.includes(mem.category) ? mem.category : 'topic'
+            await this.addGroupMemory(groupId, mem.content, mem.importance, category)
+          }
+        }
+        logger.info(`[群全局记忆] 从对话中提取了 ${memories.length} 条群记忆`)
+      }
+    } catch (error) {
+      logger.error(`[群全局记忆] 提取记忆失败: ${error}`)
     }
   }
 

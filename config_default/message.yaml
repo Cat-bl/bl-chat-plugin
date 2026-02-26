@@ -69,7 +69,8 @@ pluginSettings:
   memorySystem:
     enabled: false
     maxFactsPerUser: 100
-    importanceThreshold: 0.5
+    maxFactsPerGroup: 50
+    importanceThreshold: 0.3
     memoryDecayDays: 7
   expressionLearning:
     enabled: true

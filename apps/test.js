@@ -74,7 +74,28 @@ let pluginInitialized = false
 let sharedState = null
 
 function initializeSharedState(config) {
-  if (sharedState) return sharedState
+  if (sharedState) {
+    // 热更新：直接覆盖各 Manager 的 config，无需 Manager 侧改动
+    Object.assign(sharedState.emotionManager.config, {
+      decayRate: config.emotionSystem?.decayRate || 0.02,
+      eventWeights: {
+        ...sharedState.emotionManager.config.eventWeights,
+        ...config.emotionSystem?.eventWeights
+      }
+    })
+    Object.assign(sharedState.memoryManager.config, {
+      maxFactsPerUser: config.memorySystem?.maxFactsPerUser || 100,
+      maxFactsPerGroup: config.memorySystem?.maxFactsPerGroup || 50,
+      importanceThreshold: config.memorySystem?.importanceThreshold || 0.5,
+      memoryDecayDays: config.memorySystem?.memoryDecayDays || 7,
+      memoryAiConfig: config.memoryAiConfig || null
+    })
+    Object.assign(sharedState.expressionLearner.config, {
+      ...config.expressionLearning || {},
+      memoryAiConfig: config.memoryAiConfig || null
+    })
+    return sharedState
+  }
   sharedState = {
     messageManager: new MessageManager({
       privateMaxMessages: 100,
@@ -87,6 +108,7 @@ function initializeSharedState(config) {
     // 长期记忆
     memoryManager: new MemoryManager({
       maxFactsPerUser: config.memorySystem?.maxFactsPerUser || 100,
+      maxFactsPerGroup: config.memorySystem?.maxFactsPerGroup || 50,
       importanceThreshold: config.memorySystem?.importanceThreshold || 0.5,
       memoryDecayDays: config.memorySystem?.memoryDecayDays || 7,
       memoryAiConfig: config.memoryAiConfig || null
@@ -1025,12 +1047,15 @@ ${recentHistory || '(无)'}
       const memoryPrompt = this.config.memorySystem?.enabled
         ? await limit(() => this.memoryManager.getMemoryPromptForUser(groupId, userId))
         : ''
+      const groupMemoryPrompt = this.config.memorySystem?.enabled && groupId
+        ? await limit(() => this.memoryManager.getGroupMemoryPrompt(groupId))
+        : ''
       const expressionPrompt = this.config.expressionLearning?.enabled
         ? await limit(() => this.expressionLearner.getExpressionPromptForGroup(groupId))
         : ''
 
       // 构建增强系统提示
-      const enhancedPrompts = [emotionPrompt, memoryPrompt, expressionPrompt].filter(Boolean).join('\n')
+      const enhancedPrompts = [emotionPrompt, memoryPrompt, groupMemoryPrompt, expressionPrompt].filter(Boolean).join('\n')
 
       const systemContent = `
 【认知系统初始化】
@@ -1597,6 +1622,10 @@ ${mcpPrompts}
     if (this.config.memorySystem?.enabled && this.config.memoryAiConfig) {
       // 不 await，让它在后台执行
       this.memoryManager.extractAndSaveMemories(groupId, userId, userMessage, botReply)
+      // 提取群全局记忆
+      if (groupId) {
+        this.memoryManager.extractAndSaveGroupMemories(groupId, userMessage, e.sender?.nickname)
+      }
     }
 
     // 表达学习已移至 handleRandomReply 静默收集，不在此处调用
