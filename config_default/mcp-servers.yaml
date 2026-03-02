@@ -212,7 +212,7 @@ servers:
     description: "自定义Node.js MCP服务器"
     command: "node"
     args:
-      - "./plugins/bl-chat-plugin/mcp-servers/custom-server.js"
+      - "./plugins/bl-chat-plugin/mcp/custom-server.js"
     env: {}
     systemPrompt: |
       【MCP扩展能力】
@@ -232,7 +232,7 @@ servers:
     description: "自定义Python MCP服务器"
     command: "python"
     args:
-      - "./plugins/bl-chat-plugin/mcp-servers/custom-server.py"
+      - "./plugins/bl-chat-plugin/mcp/custom-server.py"
     env: {}
     systemPrompt: |
       【MCP扩展能力】
