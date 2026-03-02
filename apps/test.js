@@ -88,7 +88,9 @@ function initializeSharedState(config) {
       maxFactsPerGroup: config.memorySystem?.maxFactsPerGroup || 50,
       importanceThreshold: config.memorySystem?.importanceThreshold || 0.5,
       memoryDecayDays: config.memorySystem?.memoryDecayDays || 7,
-      memoryAiConfig: config.memoryAiConfig || null
+      memoryAiConfig: config.memoryAiConfig || null,
+      groupExtractMinInterval: (config.memorySystem?.groupExtractMinInterval || 5) * 60 * 1000,
+      minFactsPerCategory: config.memorySystem?.minFactsPerCategory || 2
     })
     Object.assign(sharedState.expressionLearner.config, {
       ...config.expressionLearning || {},
@@ -111,7 +113,9 @@ function initializeSharedState(config) {
       maxFactsPerGroup: config.memorySystem?.maxFactsPerGroup || 50,
       importanceThreshold: config.memorySystem?.importanceThreshold || 0.5,
       memoryDecayDays: config.memorySystem?.memoryDecayDays || 7,
-      memoryAiConfig: config.memoryAiConfig || null
+      memoryAiConfig: config.memoryAiConfig || null,
+      groupExtractMinInterval: (config.memorySystem?.groupExtractMinInterval || 5) * 60 * 1000,
+      minFactsPerCategory: config.memorySystem?.minFactsPerCategory || 2
     }),
     // 表达学习
     expressionLearner: new ExpressionLearner({
@@ -548,6 +552,55 @@ export class ExamplePlugin extends plugin {
             quotedMsg = reply.raw_message
           }
 
+          // 提取被引用消息中的转发记录内容
+          let forwardContent = ""
+          let forwardId = null
+          // 情况1: type === "forward" (NapCat/Lagrange 某些版本)
+          const forwardSegment = reply.message?.find(m => m.type === "forward")
+          if (forwardSegment?.id) {
+            forwardId = forwardSegment.id
+          }
+          // 情况2: type === "json" 且 app === "com.tencent.multimsg"
+          if (!forwardId) {
+            const jsonSegment = reply.message?.find(m => m.type === "json")
+            if (jsonSegment) {
+              try {
+                const jsonData = typeof jsonSegment.data === "string"
+                  ? JSON.parse(jsonSegment.data)
+                  : jsonSegment.data
+                if (jsonData?.app === "com.tencent.multimsg") {
+                  forwardId = jsonData.meta?.detail?.resid
+                }
+              } catch {}
+            }
+          }
+          if (forwardId && e?.group?.getForwardMsg) {
+            try {
+              const forwardMsgs = await e.group.getForwardMsg(forwardId)
+              if (Array.isArray(forwardMsgs) && forwardMsgs.length > 0) {
+                const lines = []
+                for (const fMsg of forwardMsgs) {
+                  const name = fMsg.sender?.nickname || "未知"
+                  const text = fMsg.message
+                    ?.filter(m => m.type === "text")
+                    .map(m => m.text)
+                    .join("")
+                    .trim()
+                  if (text) lines.push(`${name}: ${text}`)
+                }
+                if (lines.length > 0) {
+                  const maxLines = 50
+                  const truncated = lines.length > maxLines
+                    ? lines.slice(0, maxLines).join("\n") + `\n...(共${lines.length}条，已截断)`
+                    : lines.join("\n")
+                  forwardContent = `[转发记录内容:\n${truncated}\n]`
+                }
+              }
+            } catch (err) {
+              logger.debug(`[获取转发记录失败] ${err}`)
+            }
+          }
+
           const quotedImages = reply.message?.filter(m => m.type === "image") || []
           const hasQuotedImage = quotedImages.length > 0
 
@@ -571,7 +624,9 @@ export class ExamplePlugin extends plugin {
             const quotedMessageId = reply.message_id ? `[消息ID:${reply.message_id}]` : ''
 
             let quotedDescription = ""
-            if (quotedMsg && hasQuotedImage) {
+            if (forwardContent) {
+              quotedDescription = quotedMsg ? `"${quotedMsg}" 以及${forwardContent}` : forwardContent
+            } else if (quotedMsg && hasQuotedImage) {
               quotedDescription = `"${quotedMsg}" 以及${quotedImages.length}张图片`
             } else if (quotedMsg) {
               quotedDescription = `"${quotedMsg}"`

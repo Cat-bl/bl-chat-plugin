@@ -10,7 +10,23 @@ export class MemoryManager {
       maxFactsPerGroup: config.maxFactsPerGroup || 50,
       importanceThreshold: config.importanceThreshold || 0.5,
       memoryDecayDays: config.memoryDecayDays || 7,
-      memoryAiConfig: config.memoryAiConfig || null
+      memoryAiConfig: config.memoryAiConfig || null,
+      groupExtractMinInterval: config.groupExtractMinInterval || 5 * 60 * 1000,
+      minFactsPerCategory: config.minFactsPerCategory || 2
+    }
+
+    // 群全局记忆提取间隔记录
+    this._groupExtractLastTime = new Map()
+    // 群全局记忆提取并发锁
+    this._groupExtractingLocks = new Set()
+
+    // 群全局记忆分类别衰减速率
+    this.GROUP_DECAY_RATES = {
+      rule: 0.05,
+      event: 0.08,
+      member: 0.08,
+      topic: 0.15,
+      meme: 0.15
     }
 
     // 类别定义
@@ -561,12 +577,14 @@ export class MemoryManager {
     for (const cat of this.GROUP_CATEGORIES) {
       if (!memory.categorizedFacts[cat]) continue
 
+      const decayRate = this.GROUP_DECAY_RATES[cat] || 0.1
+
       memory.categorizedFacts[cat] = memory.categorizedFacts[cat]
         .map(fact => {
           const timeSinceUsed = now - (fact.lastUsed || fact.createdAt)
           if (timeSinceUsed > decayThreshold) {
             const decayPeriods = Math.floor(timeSinceUsed / decayThreshold)
-            fact.importance = Math.max(0.1, fact.importance - decayPeriods * 0.1)
+            fact.importance = Math.max(0.1, fact.importance - decayPeriods * decayRate)
           }
           return fact
         })
@@ -624,16 +642,25 @@ export class MemoryManager {
 
     if (total <= this.config.maxFactsPerGroup) return
 
-    const allFacts = []
+    const minPerCat = this.config.minFactsPerCategory
+    const candidates = []
+
     for (const cat of this.GROUP_CATEGORIES) {
-      for (const fact of memory.categorizedFacts[cat]) {
-        allFacts.push({ ...fact, _category: cat })
+      const facts = memory.categorizedFacts[cat] || []
+      if (facts.length <= minPerCat) continue
+      // 超出最低保留数的部分按重要性加入候选池
+      const sorted = [...facts].sort((a, b) => a.importance - b.importance)
+      for (let i = 0; i < sorted.length - minPerCat; i++) {
+        candidates.push({ ...sorted[i], _category: cat })
       }
     }
-    allFacts.sort((a, b) => a.importance - b.importance)
+
+    candidates.sort((a, b) => a.importance - b.importance)
 
     const toRemove = total - this.config.maxFactsPerGroup
-    const removeSet = new Set(allFacts.slice(0, toRemove).map(f => `${f._category}:${f.content}`))
+    const removeSet = new Set(
+      candidates.slice(0, toRemove).map(f => `${f._category}:${f.content}`)
+    )
 
     for (const cat of this.GROUP_CATEGORIES) {
       memory.categorizedFacts[cat] = memory.categorizedFacts[cat]
@@ -671,6 +698,21 @@ export class MemoryManager {
    */
   async extractAndSaveGroupMemories(groupId, chatHistory = []) {
     if (!this.config.memoryAiConfig) return
+
+    // 提取间隔控制
+    const now = Date.now()
+    const lastTime = this._groupExtractLastTime.get(groupId) || 0
+    if (now - lastTime < this.config.groupExtractMinInterval) {
+      logger.debug(`[群全局记忆] 群${groupId}提取间隔不足，跳过本次`)
+      return
+    }
+
+    // 并发锁
+    if (this._groupExtractingLocks.has(groupId)) {
+      logger.debug(`[群全局记忆] 群${groupId}正在提取中，跳过本次`)
+      return
+    }
+    this._groupExtractingLocks.add(groupId)
 
     try {
       const { memoryAiUrl, memoryAiModel, memoryAiApikey } = this.config.memoryAiConfig
@@ -767,9 +809,12 @@ export class MemoryManager {
           }
         }
         logger.info(`[群全局记忆] 从对话中提取了 ${memories.length} 条群记忆`)
+        this._groupExtractLastTime.set(groupId, Date.now())
       }
     } catch (error) {
       logger.error(`[群全局记忆] 提取记忆失败: ${error}`)
+    } finally {
+      this._groupExtractingLocks.delete(groupId)
     }
   }
 
