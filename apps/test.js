@@ -589,11 +589,7 @@ export class ExamplePlugin extends plugin {
                   if (text) lines.push(`${name}: ${text}`)
                 }
                 if (lines.length > 0) {
-                  const maxLines = 50
-                  const truncated = lines.length > maxLines
-                    ? lines.slice(0, maxLines).join("\n") + `\n...(共${lines.length}条，已截断)`
-                    : lines.join("\n")
-                  forwardContent = `[转发记录内容:\n${truncated}\n]`
+                  forwardContent = `[转发记录内容:\n${lines.join("\n")}\n]`
                 }
               }
             } catch (err) {
