@@ -66,7 +66,7 @@ export class QQZoneTool extends AbstractTool {
       let result = await new QQApi(e).delQzone(domain.tid, domain.t1_source)
       if (!result) return "❎删除说说失败"
 
-      if (result.subcode != 0) return "❎ 未知错误" + JSON.parse(result)
+      if (result.subcode != 0) return "❎ 未知错误" + JSON.stringify(result)
       // 发送结果
       return `✅ 删除说说成功：\n ${pos}.${domain.content} \n - [${domain.secret ? "私密" : "公开"}]${domain.commentlist?.length || 0} 条评论`
 

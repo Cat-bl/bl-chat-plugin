@@ -155,7 +155,7 @@ export class VideoAnalysisTool extends AbstractTool {
       const result = await response.json()
       return result.url
     } catch (error) {
-      logger.error(`上传到 ${service} 失败: ${error.message}`)
+      logger.error(`上传失败: ${error.message}`)
     }
   }
 
