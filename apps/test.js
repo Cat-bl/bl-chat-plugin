@@ -218,6 +218,7 @@ export class ExamplePlugin extends plugin {
         { reg: "^#tool\\s*(.*)", fnc: "handleTool" },
         { reg: "^#mcp\\s+重载", fnc: "reloadMCP" },
         { reg: "^#mcp\\s+列表", fnc: "listMCPTools" },
+        { reg: "^#清除群记忆$", fnc: "clearGroupMemory" },
         { reg: "[\\s\\S]*", fnc: "handleRandomReply", log: false }
       ]
     })
@@ -1943,6 +1944,35 @@ ${mcpPrompts}
     }
 
     logger.info(`[工具] 本地工具: ${localTools.length}, MCP工具: ${mcpTools.length}`)
+  }
+
+  /**
+   * 清除当前群的所有记忆（群记忆 + 用户记忆）
+   */
+  async clearGroupMemory(e) {
+    if (!e.group_id) {
+      await e.reply("请在群聊中使用此命令")
+      return true
+    }
+
+    try {
+      const prefix = this.memoryManager.REDIS_PREFIX
+      const groupId = e.group_id
+      // 群全局记忆
+      const groupKey = this.memoryManager.getGroupRedisKey(groupId)
+      // 该群下所有用户记忆 ytbot:memory:{groupId}:*
+      const userKeys = await redis.keys(`${prefix}${groupId}:*`)
+
+      const allKeys = [groupKey, ...userKeys]
+      if (allKeys.length) {
+        await redis.del(allKeys)
+      }
+      await e.reply(`已清除本群记忆（群共识 + ${userKeys.length} 条用户记忆）`)
+    } catch (error) {
+      logger.error("[群记忆] 清除失败:", error)
+      await e.reply("清除失败，请查看日志")
+    }
+    return true
   }
 
   /**
