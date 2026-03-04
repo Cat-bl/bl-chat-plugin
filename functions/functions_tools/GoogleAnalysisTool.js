@@ -12,7 +12,7 @@ export class GoogleImageAnalysisTool extends AbstractTool {
     constructor() {
         super();
         this.name = 'googleImageAnalysisTool';
-        this.description = '进行图像分析, 当用户识别图片内容时使用此工具。支持多图片分析，可提取图片中的文字信息并进行理解分析。注意：所有图片URL必须保持完整原始形式，不得修改或简化URL参数。';
+        this.description = '进行图像分析, 当用户识别图片内容时使用此工具。支持多图片分析，可提取图片中的文字信息并进行理解分析。注意：所有图片URL必须保持完整原始形式，不得修改或简化URL参数。当用户要求查看QQ头像时（如"看下我的头像"、"看下他的头像"、"看下张三的头像"），使用头像URL格式：https://q1.qlogo.cn/g?b=qq&nk={QQ号}&s=640';
         this.parameters = {
             type: "object",
             properties: {
@@ -22,10 +22,13 @@ export class GoogleImageAnalysisTool extends AbstractTool {
                 },
                 images: {
                     type: 'array',
-                    description: '需要处理的图片链接数组。重要：必须保持原始URL的完整性，包括所有查询参数。示例链接：\n' +
-                        '1. 示例1: "https://multimedia.nt.qq.com.cn/download?appid=1407&fileid=EhSpon0PNM0ysZkSasHTTFhNhPkn2xiM9ogCIP8KKPTzyfGXgYsDMgRwcm9kUIC9owFaELWsiGLkylkWILRwFGxE3cQ&spec=0&rkey=CAQSOAB6JWENi5LM1F9SWC-_lnNTz6V9r7O2ev3HX_QmYpr_odrwSXfUpXfNIyIowntqLF3KoE8inPMs"\n' +
-                        '2. 示例2: "https://gchat.qpic.cn/gchatpic_new/2119611465/782312429-2903731874-87B79F5B839EA2F3AD0AD48DD539D946/0?term=2&is_origin=0"\n' +
-                        '以上链接中的所有参数（特别是rkey、fileid等）都必须完整保留，不得简化或修改',
+                    description: '需要处理的图片链接数组。重要：必须保持原始URL的完整性，包括所有查询参数。\n' +
+                        'QQ头像链接格式：https://q1.qlogo.cn/g?b=qq&nk={QQ号}&s=640\n' +
+                        '示例链接：\n' +
+                        '1. QQ头像: "https://q1.qlogo.cn/g?b=qq&nk=123456789&s=640"\n' +
+                        '2. 腾讯图床: "https://multimedia.nt.qq.com.cn/download?appid=1407&fileid=xxx&spec=0&rkey=xxx"\n' +
+                        '3. QQ图片: "https://gchat.qpic.cn/gchatpic_new/xxx/0?term=2&is_origin=0"\n' +
+                        '以上链接中的所有参数都必须完整保留，不得简化或修改',
                     items: {
                         type: 'string',
                         description: '完整的图片URL，必须与原始输入完全一致。示例：\n' +
@@ -145,8 +148,12 @@ export class GoogleImageAnalysisTool extends AbstractTool {
     }
 
     extractDomain(url) {
-        const ampIndex = url.indexOf('&');
-        return ampIndex !== -1 ? url.slice(0, ampIndex) : url;
+        try {
+            const urlObj = new URL(url);
+            return urlObj.origin;
+        } catch {
+            return null;
+        }
     }
 
     async func(opts, e) {
