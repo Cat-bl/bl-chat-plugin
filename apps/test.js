@@ -642,7 +642,23 @@ export class ExamplePlugin extends plugin {
     }
 
     const content = []
-    if (msg) content.push(`在群里说: ${msg}`)
+    if (msg) {
+      let fullMsg = msg
+      if (e?.message && group && atQq.length > 0) {
+        try {
+          const memberMap = await group.getMemberMap()
+          fullMsg = e.message.map(m => {
+            if (m.type === 'text') return m.text
+            if (m.type === 'at' && String(m.qq) !== String(Bot.uin)) {
+              const info = memberMap.get(Number(m.qq))
+              return `@${info?.card || info?.nickname || m.qq}`
+            }
+            return ''
+          }).join('').replace(/^#tool\s*/, '').trim()
+        } catch {}
+      }
+      content.push(`在群里说: ${fullMsg}`)
+    }
     if (images?.length) {
       content.push(`发送了${images.length === 1 ? "一张" : images.length + " 张"}图片${images.map(img => `\n![图片](${img})`).join("")}`)
     }
