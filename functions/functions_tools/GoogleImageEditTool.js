@@ -152,7 +152,7 @@ export class GoogleImageEditTool extends AbstractTool {
 
     async handleNormalResponse(response) {
         const data = await response.json();
-        logger.error(JSON.stringify(data));
+        // logger.error(JSON.stringify(data));
 
         const imageUrl = data?.choices?.[0]?.message?.images?.[0]?.image_url?.url ||
             data?.choices?.[0]?.message?.images?.[0]?.url ||
