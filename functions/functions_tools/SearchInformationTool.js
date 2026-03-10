@@ -10,7 +10,7 @@ export class SearchInformationTool extends AbstractTool {
   constructor() {
     super();
     this.name = 'searchInformationTool';
-    this.description = '请求外部 API 进行自由搜索，检索结果，对于需要进行搜索或需要实时数据信息的时候使用';
+    this.description = '请求外部 API 进行自由搜索，检索结果，对于需要进行搜索或需要实时数据信息的时候使用，总结群聊聊天记录时无需调用';
     this.parameters = {
       type: "object",
       properties: {
