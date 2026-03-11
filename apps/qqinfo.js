@@ -16,18 +16,14 @@ export class QQinfo extends plugin {
     }
 
     async getInfo(e) {
-        return
+        // return
         if (this.e.user_id == this.e.self_id) return
+        const bot = e.bot ?? Bot
         // 获取用户
-        const KEY_DATA = await fetch("http://127.0.0.1:3000/get_credentials", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                domain: "vip.qq.com",
-            }),
-        }).then(res => res.json())
+        const KEY_DATA = await bot.sendApi('get_credentials', {
+            domain: "vip.qq.com",
+        })
+
         // logger.info(KEY_DATA.data.cookies, 666)
 
         const skeyRegex = /skey=([^;]+)/.exec(KEY_DATA.data.cookies)

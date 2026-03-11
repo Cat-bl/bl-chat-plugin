@@ -17,6 +17,7 @@ export class QQinfo extends plugin {
     }
 
     async getInfo(e) {
+        const bot = e.bot ?? Bot
         let atMsg
         atMsg = e.message?.filter(msg => {
             return msg.type == "at"
@@ -26,15 +27,9 @@ export class QQinfo extends plugin {
             return e.reply("请输入qq号或者直接艾特再发送命令", true)
         }
         // 获取用户
-        const KEY_DATA = await fetch("http://127.0.0.1:3000/get_credentials", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                domain: "vip.qq.com",
-            }),
-        }).then(res => res.json())
+        const KEY_DATA = await bot.sendApi('get_credentials', {
+            domain: "vip.qq.com",
+        })
         // logger.info(KEY_DATA.data.cookies, 666)
 
         const skeyRegex = /skey=([^;]+)/.exec(KEY_DATA.data.cookies)
