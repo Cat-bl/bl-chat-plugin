@@ -1707,22 +1707,19 @@ ${mcpPrompts}
   async sendSegmentedMessage(e, output, quoteChance = 0.5) {
     try {
       const shouldQuote = Math.random() < quoteChance
-      const { result, hasAt, atQQList } = await this.convertAtInString(output, e.group)
+      const { hasAt, msgSegments } = await this.convertAtInString(output, e.group)
 
-      if (e.group) {
-        output = result || output
+      // 有真艾特时直接发送消息段数组（@ 保持在原始位置）
+      if (hasAt && msgSegments) {
+        const res = await e.reply(msgSegments)
+        return res?.message_id
       }
 
       const { total_tokens } = await TotalTokens(output)
       let lastMessageId = null
 
       if (total_tokens <= 10) {
-        let res
-        if (hasAt) {
-          res = await e.reply([...atQQList.map(qq => segment.at(qq)), ' ', output])
-        } else {
-          res = await e.reply(output, shouldQuote)
-        }
+        const res = await e.reply(output, shouldQuote)
         lastMessageId = res?.message_id
         return lastMessageId
       }
@@ -1731,12 +1728,7 @@ ${mcpPrompts}
       for (let i = 0; i < segments.length; i++) {
         if (segments[i]?.trim()) {
           const quote = shouldQuote && i === 0
-          let res
-          if (hasAt && i === 0) {
-            res = await e.reply([...atQQList.map(qq => segment.at(qq)), ' ', segments[i].trim()])
-          } else {
-            res = await e.reply(segments[i].trim(), quote)
-          }
+          const res = await e.reply(segments[i].trim(), quote)
           lastMessageId = res?.message_id
 
           if (i < segments.length - 1) {
@@ -1791,22 +1783,45 @@ ${mcpPrompts}
   }
 
   async convertAtInString(content, group) {
-    if (!group) return { result: content, hasAt: false, atQQList: [] }
+    if (!group) return { result: content, hasAt: false, msgSegments: null }
 
     const members = await group.getMemberMap()
-    const atQQList = []
-    let result = content
+    const atList = []
 
-    const matches = content.matchAll(/@([^\s]+)/g)
-    for (const match of matches) {
+    // 匹配 @QQ号 格式（5-11位纯数字）
+    for (const match of content.matchAll(/@(\d{5,11})(?!\d)/g)) {
       const member = this.findMember(match[1], members)
       if (member) {
-        result = result.replace(match[0], "")
-        atQQList.push(member.qq)
+        atList.push({ index: match.index, length: match[0].length, qq: member.qq })
       }
     }
 
-    return { result, hasAt: atQQList.length > 0, atQQList }
+    // 匹配 @昵称 格式（非数字开头，取到标点或空白为止）
+    for (const match of content.matchAll(/@([^\s\d@，。！？、；：""''（）【】,.!?;:'"()\[\]]{1,20})/g)) {
+      const member = this.findMember(match[1], members)
+      if (member && !atList.some(a => a.qq === member.qq)) {
+        atList.push({ index: match.index, length: match[0].length, qq: member.qq })
+      }
+    }
+
+    if (atList.length === 0) return { result: content, hasAt: false, msgSegments: null }
+
+    // 按位置排序，构建消息段数组（@ 保持在原始位置）
+    atList.sort((a, b) => a.index - b.index)
+    const msgSegments = []
+    let lastEnd = 0
+    for (const at of atList) {
+      if (at.index > lastEnd) {
+        msgSegments.push(content.slice(lastEnd, at.index))
+      }
+      msgSegments.push(segment.at(at.qq))
+      lastEnd = at.index + at.length
+    }
+    if (lastEnd < content.length) {
+      msgSegments.push(content.slice(lastEnd))
+    }
+
+    return { result: content, hasAt: true, msgSegments }
   }
 
   findMember(target, members) {
