@@ -16,7 +16,7 @@ export class QQinfo extends plugin {
     }
 
     async getInfo(e) {
-        // return
+        return
         if (this.e.user_id == this.e.self_id) return
         const bot = e.bot ?? Bot
         // 获取用户

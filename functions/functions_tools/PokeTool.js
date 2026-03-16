@@ -8,7 +8,7 @@ export class PokeTool extends AbstractTool {
   constructor() {
     super();
     this.name = 'pokeTool';
-    this.description = '对群聊中的用户进行戳一戳，戳的操作，当有明确的目标群员时，进行戳一戳或者戳时请调用此工具';
+    this.description = '对群聊中的用户进行戳一戳，戳的操作，进行戳一戳或者戳时请调用此工具';
     this.parameters = {
       type: 'object',
       properties: {
