@@ -2,6 +2,7 @@ import { JinyanTool } from "../functions/functions_tools/JinyanTool.js"
 import { EmotionManager } from "../utils/EmotionManager.js"
 import { MemoryManager } from "../utils/MemoryManager.js"
 import { ExpressionLearner } from "../utils/ExpressionLearner.js"
+import KnowledgeSearcher from "../functions/KnowledgeSearcher.js"
 import { SearchInformationTool } from "../functions/functions_tools/SearchInformationTool.js"
 import { SearchVideoTool } from "../functions/functions_tools/SearchVideoTool.js"
 import { SearchMusicTool } from "../functions/functions_tools/SearchMusicTool.js"
@@ -96,6 +97,19 @@ function initializeSharedState(config) {
       ...config.expressionLearning || {},
       memoryAiConfig: config.memoryAiConfig || null
     })
+    // 知识库热更新
+    if (config.knowledgeSystem?.enabled && !sharedState.knowledgeSearcher) {
+      sharedState.knowledgeSearcher = new KnowledgeSearcher({
+        apiKey: config.embeddingAiConfig?.embeddingApiKey,
+        apiUrl: config.embeddingAiConfig?.embeddingApiUrl,
+        dbPath: path.join(_path, 'plugins/bl-chat-plugin/data/knowledge-db.ndjson'),
+        model: config.embeddingAiConfig?.embeddingApiModel || 'text-embedding-3-small',
+        topN: config.knowledgeSystem?.topN || 4,
+        threshold: config.knowledgeSystem?.threshold || 0.6
+      })
+    } else if (!config.knowledgeSystem?.enabled) {
+      sharedState.knowledgeSearcher = null
+    }
     return sharedState
   }
   sharedState = {
@@ -122,6 +136,17 @@ function initializeSharedState(config) {
       ...config.expressionLearning || {},
       memoryAiConfig: config.memoryAiConfig || null
     }),
+    // 知识库检索
+    knowledgeSearcher: config.knowledgeSystem?.enabled
+      ? new KnowledgeSearcher({
+          apiKey: config.embeddingAiConfig?.embeddingApiKey,
+          apiUrl: config.embeddingAiConfig?.embeddingApiUrl,
+          dbPath: path.join(_path, 'plugins/bl-chat-plugin/data/knowledge-db.ndjson'),
+          model: config.embeddingAiConfig?.embeddingApiModel || 'text-embedding-3-small',
+          topN: config.knowledgeSystem?.topN || 4,
+          threshold: config.knowledgeSystem?.threshold || 0.6
+        })
+      : null,
     toolInstances: {
       jinyanTool: new JinyanTool(),
       searchInformationTool: new SearchInformationTool(),
@@ -235,6 +260,7 @@ export class ExamplePlugin extends plugin {
     this.emotionManager = state.emotionManager
     this.memoryManager = state.memoryManager
     this.expressionLearner = state.expressionLearner
+    this.knowledgeSearcher = state.knowledgeSearcher
     this.REDIS_KEY_PREFIX = 'ytbot:messages:'
 
     this.initTools()
@@ -1122,8 +1148,21 @@ ${recentHistory || '(无)'}
         ? await limit(() => this.expressionLearner.getExpressionPromptForGroup(groupId))
         : ''
 
+      // 知识库检索
+      let knowledgePrompt = ''
+      if (this.knowledgeSearcher && e.msg) {
+        try {
+          const result = await limit(() => this.knowledgeSearcher.search(e.msg))
+          if (result?.knowledgeContext) {
+            knowledgePrompt = `【知识库参考】\n以下是与当前话题相关的参考知识，请在回复时自然融入（不要生硬引用）：\n${result.knowledgeContext}`
+          }
+        } catch (err) {
+          logger.error(`[知识库] 检索失败: ${err.message}`)
+        }
+      }
+
       // 构建增强系统提示
-      const enhancedPrompts = [emotionPrompt, memoryPrompt, groupMemoryPrompt, expressionPrompt].filter(Boolean).join('\n')
+      const enhancedPrompts = [emotionPrompt, memoryPrompt, groupMemoryPrompt, expressionPrompt, knowledgePrompt].filter(Boolean).join('\n')
 
       const systemContent = `
 【认知系统初始化】

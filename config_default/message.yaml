@@ -79,6 +79,14 @@ pluginSettings:
     blockedWords: []
     aiLearningEnabled: true
     aiLearningMessageThreshold: 50
+  knowledgeSystem:
+    enabled: false
+    topN: 10
+    threshold: 0.35
+  embeddingAiConfig:
+    embeddingApiUrl: https://api.openai.com/v1/embeddings
+    embeddingApiModel: text-embedding-3-small
+    embeddingApiKey: sk-xxxxx
   openai_tool_choice: auto
   oneapi_tools:
     - likeTool

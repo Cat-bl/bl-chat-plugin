@@ -39,6 +39,25 @@ pnpm install
 ### 列出mcp工具列表
 #mcp 列表
 
+### 添加知识库条目（主人）
+#知识库添加 [知识内容]
+
+### 删除知识库条目（主人）
+#知识库删除 [关键词]
+
+### 查看知识库列表（主人）
+#知识库列表
+#知识库列表 2
+
+### 搜索知识库（主人）
+#知识库搜索 [文本]
+
+### 清空知识库（主人）
+#知识库清空
+
+### 查看知识库统计（主人）
+#知识库统计
+
 
 # mcp-servers.yaml配置说明
 已实现MCP官方3种标准连接方式（Stdio、SSE、Streamable HTTP）设置type即可("sse","stdio","http")，默认stdio。例sse链接：
@@ -176,6 +195,30 @@ systemPrompt: |
 
 ---
 
+### 知识库系统 (`knowledgeSystem`)
+
+基于 Embedding 向量检索的知识库，可以为 AI 注入自定义知识（如中文梗、流行语、专业知识等）。每条消息会自动检索知识库，命中的知识注入到 system prompt 中，AI 回复时自然融入。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `enabled` | boolean | `false` | **知识库开关** |
+| `topN` | int | `10` | **最大返回条数**：检索命中后最多返回几条最相关的知识 |
+| `threshold` | float | `0.35` | **相似度阈值**：0~1，只有相似度 ≥ 此值的知识才会被返回，建议 0.3~0.5 |
+
+> **重要提示**：开启知识库需要配置 `embeddingAiConfig`，用于调用 Embedding 模型生成文本向量。
+
+**使用方式**：
+1. 单条添加：`#知识库添加 yyds是"永远的神"的拼音缩写，表示某人或某物非常厉害`
+2. 批量导入：在 Yunzai 根目录执行 `node plugins/bl-chat-plugin/scripts/import-knowledge.js <文件路径>`
+   - 支持 `.txt`（每行一条）和 `.json`（字符串数组 或 [CHIME](https://github.com/yuboxie/chime) 格式）
+   - 示例：`node plugins/bl-chat-plugin/scripts/import-knowledge.js ./my-knowledge.txt`
+3. 搜索测试：`#知识库搜索 yyds`
+4. 查看管理：`#知识库列表`、`#知识库统计`、`#知识库删除 关键词`、`#知识库清空`
+
+**效果**：用户在群里聊天时，AI 会自动根据消息内容检索知识库，将相关知识融入回复中。
+
+---
+
 ## 触发机制
 
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -285,6 +328,18 @@ memoryAiApikey: "sk-xxxxx"
 ```
 
 **说明**：每次对话后会异步调用此模型，提取用户消息中值得记忆的信息（如喜好、身份等）。推荐使用 `gpt-4o-mini`、`gemini-2.0-flash` 等小模型。
+
+### Embedding 模型配置 (`embeddingAiConfig`)
+
+> ⚠️ **仅在开启 `knowledgeSystem.enabled: true` 时需要配置**
+
+```yaml
+embeddingApiUrl: "https://api.openai.com/v1/embeddings"
+embeddingApiModel: "text-embedding-3-small"
+embeddingApiKey: "sk-xxxxx"
+```
+
+**说明**：知识库使用 Embedding 模型将文本转为向量进行语义检索。URL 为完整路径（`/v1/embeddings`），不是 `/v1/chat/completions`。大部分 OpenAI 兼容的中转站都支持此接口。
 
 ### 启用工具列表 (`oneapi_tools`)
 ```yaml
