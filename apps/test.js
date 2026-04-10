@@ -39,6 +39,7 @@ import { getRedBagType, isExclusiveForUser } from "../utils/redBagUtils.js"
 import fs from "fs"
 import YAML from "yaml"
 import path from "path"
+import chokidar from "chokidar"
 import { randomUUID } from "crypto"
 import pLimit from "p-limit"
 import schedule from 'node-schedule'
@@ -74,10 +75,13 @@ const roleMap = { owner: "owner", admin: "admin", member: "member" }
 
 let pluginInitialized = false
 let sharedState = null
+let configWatcher = null
 
 function initializeSharedState(config) {
   if (sharedState) {
     // 热更新：直接覆盖各 Manager 的 config，无需 Manager 侧改动
+    sharedState.messageManager.groupMaxMessages = config.groupMaxMessages || 100
+    sharedState.messageManager.cacheExpireDays = config.groupChatMemoryDays
     Object.assign(sharedState.emotionManager.config, {
       decayRate: config.emotionSystem?.decayRate || 0.02,
       eventWeights: {
@@ -108,6 +112,12 @@ function initializeSharedState(config) {
         topN: config.knowledgeSystem?.topN || 4,
         threshold: config.knowledgeSystem?.threshold || 0.6
       })
+    } else if (config.knowledgeSystem?.enabled && sharedState.knowledgeSearcher) {
+      sharedState.knowledgeSearcher.apiKey = config.embeddingAiConfig?.embeddingApiKey
+      sharedState.knowledgeSearcher.apiUrl = config.embeddingAiConfig?.embeddingApiUrl
+      sharedState.knowledgeSearcher.model = config.embeddingAiConfig?.embeddingApiModel || 'text-embedding-3-small'
+      sharedState.knowledgeSearcher.topN = config.knowledgeSystem?.topN || 4
+      sharedState.knowledgeSearcher.threshold = config.knowledgeSystem?.threshold || 0.6
     } else if (!config.knowledgeSystem?.enabled) {
       sharedState.knowledgeSearcher = null
     }
@@ -512,6 +522,34 @@ export class ExamplePlugin extends plugin {
     } catch (err) {
       logger.error(`[配置] 加载配置文件失败: ${err}`)
       this.config = {}
+    }
+
+    // 监听 yaml 配置文件变化，实现真正的热更新
+    if (!configWatcher) {
+      let reloadTimer = null
+      configWatcher = chokidar.watch(configPath).on('change', () => {
+        // 防抖：500ms 内多次修改只触发一次
+        clearTimeout(reloadTimer)
+        reloadTimer = setTimeout(() => {
+          try {
+            const defaultConfig = YAML.parse(fs.readFileSync(defaultConfigPath, "utf8"))
+            const userConfig = YAML.parse(fs.readFileSync(configPath, "utf8"))
+            const merged = this.mergeConfig(defaultConfig, userConfig)
+            this.config = merged.pluginSettings
+
+            // 刷新各模块配置
+            EMOJI_CONFIG.enabled = this.config?.emojiEnabled || false
+            const state = initializeSharedState(this.config)
+            this.knowledgeSearcher = state.knowledgeSearcher
+            this.MAX_HISTORY = this.config.groupMaxMessages || 100
+            this.initTools()
+
+            logger.mark(`[bl-chat-plugin][热更新] message.yaml 配置已重新加载`)
+          } catch (err) {
+            logger.error(`[bl-chat-plugin][热更新] 重新加载配置失败: ${err}`)
+          }
+        }, 500)
+      })
     }
   }
 
