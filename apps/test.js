@@ -49,8 +49,8 @@ const _path = process.cwd()
 // 表情包配置
 const EMOJI_CONFIG = {
   enabled: true, // 是否启用表情包回复功能
-  baseProbability: 0.10, // 基础触发概率
-  maxProbability: 0.20, // 最大触发概率
+  baseProbability: 0.20, // 基础触发概率
+  maxProbability: 0.30, // 最大触发概率
   cooldownTime: 30000, // 冷却时间（毫秒），30秒内再次触发概率会衰减
   minDelay: 500, // 表情包发送的最小延迟（毫秒）
   maxDelay: 500 // 表情包发送的最大延迟（毫秒）
