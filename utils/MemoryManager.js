@@ -1269,29 +1269,9 @@ export class MemoryManager {
 
     if (!interaction) return { queued: false, reason: "invalid" }
 
-    const key = this.getUserBufferKey(groupId, userId)
-    let buffer = this.userBuffers.get(key)
-    if (!buffer) {
-      buffer = { groupId, userId, messages: [], timer: null }
-      this.userBuffers.set(key, buffer)
-    }
-
-    buffer.messages.push(interaction)
-
-    if (buffer.messages.length >= this.config.userExtractMaxBatchMessages) {
-      return await this.flushUserBuffer(key)
-    }
-
-    if (!buffer.timer) {
-      buffer.timer = setTimeout(() => {
-        this.flushUserBuffer(key).catch(error => {
-          logger?.error?.(`[MemoryManager] 用户记忆缓冲区刷新失败 ${key}: ${error.stack || error}`)
-        })
-      }, this.config.userExtractDebounceSeconds * 1000)
-      buffer.timer.unref?.()
-    }
-
-    return { queued: true, buffered: buffer.messages.length }
+    return await this.enqueueUserTask(groupId, userId, async () => {
+      return await this.extractAndSaveMemoriesNow(groupId, userId, [interaction])
+    })
   }
 
   async flushUserBuffer(key) {

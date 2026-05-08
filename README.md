@@ -156,8 +156,6 @@ systemPrompt: |
 | `maxFactsPerGroup` | int | `50` | **每群最大全局记忆条数**（所有类别总计） |
 | `importanceThreshold` | float | `0.5` | **重要性阈值**：低于此值的事实不会保存 |
 | `memoryDecayDays` | int | `7` | 记忆召回时参考的时效天数 |
-| `userExtractDebounceSeconds` | int | `90` | 用户记忆多久整理一次 |
-| `userExtractMaxBatchMessages` | int | `6` | 用户累计多少条消息后立即整理 |
 | `groupExtractMinIntervalMinutes` | int | `10` | 群记忆最小整理间隔 |
 | `groupExtractMaxBatchMessages` | int | `12` | 群累计多少条消息后立即整理 |
 | `promptMaxUserFacts` | int | `8` | 注入 prompt 的用户记忆最大条数 |
@@ -171,6 +169,7 @@ systemPrompt: |
 
 **使用说明**：
 - 记忆整理是后台异步执行的，不会阻塞正常聊天。
+- 用户记忆会在一次对话回复完成后立即异步提取；群记忆会按上面的时间间隔和累计条数批量整理。
 - 工具调用结果、机器人自己的回复、系统提示不会被保存进记忆。
 - 旧版记忆会自动兼容迁移，不需要手动清空。
 
@@ -375,7 +374,7 @@ memoryAiModel: "gpt-4o-mini"    # 推荐使用小模型，省钱且响应快
 memoryAiApikey: "sk-xxxxx"
 ```
 
-**说明**：用户记忆和群记忆会按 debounce 批处理异步调用此模型，提取值得长期保存的事实。推荐使用 `gpt-4o-mini`、`gemini-2.0-flash` 等小模型。
+**说明**：用户记忆会在对话结束后立即异步调用此模型；群记忆会批量整理后再调用此模型，提取值得长期保存的事实。推荐使用 `gpt-4o-mini`、`gemini-2.0-flash` 等小模型。
 
 ### Embedding 模型配置 (`embeddingAiConfig`)
 
