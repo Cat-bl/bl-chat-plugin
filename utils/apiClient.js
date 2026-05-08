@@ -134,7 +134,9 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             delete finalRequestData.tools;
             delete finalRequestData.tool_choice;
         }
-        finalRequestData.messages = removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages)
+        finalRequestData.messages = moveFinalToolPromptToEnd(
+            removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages)
+        )
         console.log('最终请求体:', finalRequestData);
         try {
             response = await fetch(url, {
@@ -223,6 +225,28 @@ function convertToolMessagesForChat(messages = [], fallbackToolName = 'tool') {
     }
 
     return converted.filter(Boolean);
+}
+
+function moveFinalToolPromptToEnd(messages = []) {
+    const finalPrompts = [];
+    const normalMessages = [];
+
+    for (const msg of messages) {
+        const content = String(msg?.content || "");
+        const isFinalToolPrompt = msg?.role === "system"
+            && content.includes("工具已全部执行完成")
+            && content.includes("自然口语");
+
+        if (isFinalToolPrompt) {
+            finalPrompts.push(msg);
+        } else {
+            normalMessages.push(msg);
+        }
+    }
+
+    return finalPrompts.length
+        ? [...normalMessages, finalPrompts[finalPrompts.length - 1]]
+        : normalMessages;
 }
 
 function summarizeToolResultForChat(toolName, content = '') {

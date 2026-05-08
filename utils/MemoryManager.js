@@ -1330,10 +1330,12 @@ export class MemoryManager {
       const existingFacts = await this.store.getFacts(meta, false)
       const operations = await this.extractor.extractUserOperations({ groupId, userId, messages: validMessages, existingFacts })
       const result = await this.applyOperations("user", groupId, userId, operations)
-      meta.lastSuccessAt = now()
-      meta.failureCount = 0
-      meta.nextRetryAt = 0
-      await this.store.saveMeta(meta)
+      const latestMeta = await this.store.getUserMeta(groupId, userId)
+      latestMeta.lastSuccessAt = now()
+      latestMeta.failureCount = 0
+      latestMeta.nextRetryAt = 0
+      await this.store.saveMeta(latestMeta)
+      logger?.debug?.(`[MemoryManager] 用户记忆元数据已刷新 group=${groupId} user=${userId} 操作=${operations.length} 当前事实=${latestMeta.factIds.length}`)
       logger?.info?.(`[MemoryManager] 用户记忆抽取完成 group=${groupId} user=${userId} 保存=${result.saved} 删除=${result.deleted} 跳过=${result.skipped}`)
       return result
     } catch (error) {
@@ -1466,10 +1468,12 @@ export class MemoryManager {
       const existingFacts = await this.store.getFacts(meta, false)
       const operations = await this.extractor.extractGroupOperations({ groupId, messages, existingFacts })
       const result = await this.applyOperations("group", groupId, null, operations)
-      meta.lastSuccessAt = now()
-      meta.failureCount = 0
-      meta.nextRetryAt = 0
-      await this.store.saveMeta(meta)
+      const latestMeta = await this.store.getGroupMeta(groupId)
+      latestMeta.lastSuccessAt = now()
+      latestMeta.failureCount = 0
+      latestMeta.nextRetryAt = 0
+      await this.store.saveMeta(latestMeta)
+      logger?.debug?.(`[MemoryManager] 群记忆元数据已刷新 group=${groupId} 操作=${operations.length} 当前事实=${latestMeta.factIds.length}`)
       logger?.info?.(`[MemoryManager] 群记忆抽取完成 group=${groupId} 保存=${result.saved} 删除=${result.deleted} 跳过=${result.skipped}`)
       return result
     } catch (error) {
@@ -1479,10 +1483,11 @@ export class MemoryManager {
   }
 
   async recordExtractionFailure(meta, error, scope) {
-    meta.failureCount = (Number(meta.failureCount) || 0) + 1
-    const backoffMs = Math.min(60 * 60 * 1000, Math.pow(2, Math.min(6, meta.failureCount)) * 60 * 1000)
-    meta.nextRetryAt = now() + backoffMs
-    await this.store.saveMeta(meta)
+    const latestMeta = await this.store.getMeta(meta.scope, meta.groupId, meta.userId)
+    latestMeta.failureCount = (Number(latestMeta.failureCount) || 0) + 1
+    const backoffMs = Math.min(60 * 60 * 1000, Math.pow(2, Math.min(6, latestMeta.failureCount)) * 60 * 1000)
+    latestMeta.nextRetryAt = now() + backoffMs
+    await this.store.saveMeta(latestMeta)
     logger?.error?.(`[MemoryManager] ${scope === "user" ? "用户记忆" : "群记忆"}抽取失败: ${error.stack || error}`)
   }
 
