@@ -546,8 +546,7 @@ async function triggerReminder(reminderId, toolInstances) {
         // 判断是 MCP 工具还是本地工具
         if (mcpManager?.isMCPTool?.(tool)) {
           // MCP 工具
-          const realToolName = mcpManager.getRealToolName(tool)
-          await mcpManager.executeTool(realToolName, mergedParams)
+          await mcpManager.executeToolByAlias(tool, mergedParams)
           logger.info(`[ReminderTool] 已执行 MCP 工具: ${tool}`)
         } else if (toolInstances?.[tool]) {
           // 本地工具

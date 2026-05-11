@@ -44,8 +44,14 @@ pnpm install
 ### 重新加载mcp工具
 #mcp 重载
 
+### 查看mcp服务状态
+#mcp 状态
+
 ### 列出mcp工具列表
 #mcp 列表
+
+### 测试mcp工具（仅主人）
+#mcp 测试 [工具名] [JSON参数]
 
 ### 添加知识库条目
 #知识库添加 [知识内容]
@@ -178,27 +184,61 @@ export class CustomWeatherTool extends AbstractTool {
 ---
 
 # mcp-servers.yaml配置说明
-已实现MCP官方3种标准连接方式（Stdio、SSE、Streamable HTTP）设置type即可("sse","stdio","http")，默认stdio。例sse链接：
+MCP 用来接入外部工具服务。插件支持 `stdio`、`http`、`sse` 三种连接方式，推荐优先使用 `http`（Streamable HTTP），`sse` 主要用于兼容旧 MCP 服务，默认是 `stdio`。
+插件启动或执行 `#mcp 重载` 时，会按 `config_default/mcp-servers.yaml` 自动补齐新增的默认配置项，用户自己添加的 MCP 服务不会被覆盖。
+
 ```yaml
-ChatPPT:
+settings:
+  connectTimeoutMs: 30000
+  toolCallTimeoutMs: 60000
+  toolResultMaxChars: 8000
+  autoReconnect: true
+  reconnectMaxAttempts: 3
+
+servers:
+  example:
     enabled: false
-    type: "sse"
-      description: "ChatPPT MCP Server 目前已经开放了 10 个智能PPT文档的接口能力"
-      baseUrl: "https://dashscope.aliyuncs.com/api/v1/mcps/ChatPPT/sse"
-      headers: {
-        Authorization: "Bearer xxx"
-      }
-      systemPrompt: |
-        【MCP扩展能力】
-        请在此处书写当前MCP工具的systemPrompt
+    type: "http"
+    description: "示例 MCP 服务"
+    baseUrl: "https://example.com/mcp"
+    headers:
+      Authorization: "Bearer xxx"
+    includeTools: []
+    excludeTools: []
+    systemPrompt: |
+      【MCP扩展能力】
+      这里可以写这个 MCP 服务额外需要提醒 AI 的使用规则。
 ```
 
-### 注意如果要配置MCP工具的systemPrompt，请务必按照以下格式添加【MCP扩展能力】字段，例：
-```yaml
-systemPrompt: |
-    【MCP扩展能力】
-    请在此处书写当前MCP工具的systemPrompt
- ```
+常用配置说明：
+- `settings`：MCP 全局运行设置，通常保持默认即可。
+- `connectTimeoutMs`：连接 MCP 服务的超时时间，单位毫秒。默认 `30000` 表示 30 秒内连不上就判定连接失败。
+- `toolCallTimeoutMs`：单次 MCP 工具调用的超时时间，单位毫秒。默认 `60000` 表示工具执行超过 60 秒就返回超时错误。
+- `toolResultMaxChars`：单次 MCP 工具结果注入给模型的最大字符数。默认 `8000`，结果太长会自动截断，避免撑爆上下文。
+- `autoReconnect`：MCP 服务断开后是否自动重连。默认 `true`。
+- `reconnectMaxAttempts`：单个 MCP 服务断开后的最大自动重连次数。默认 `3`。
+- `enabled`：是否启用这个 MCP 服务。
+- `type`：连接方式，填写 `stdio`、`http` 或 `sse`。
+- `baseUrl`：远程 MCP 服务地址，`http` 和 `sse` 需要填写。
+- `command` / `args` / `env`：本地 `stdio` 服务需要填写，用来启动本地 MCP 进程。
+- `headers`：远程 MCP 的请求头，常用于填写 `Authorization`。
+- `includeTools`：只加载指定工具，留空表示加载全部。
+- `excludeTools`：排除指定工具，留空表示不排除。
+- `systemPrompt`：可选，用来补充这个 MCP 服务的使用规则。
+
+MCP 工具名会自动加上服务名前缀，格式为 `mcp_服务名_工具名`，例如 `search` 来自 `web` 服务时会显示为 `mcp_web_search`。这样多个 MCP 服务有同名工具时也不会冲突，请统一使用新的完整工具名。
+
+MCP 管理命令：
+- `#mcp 重载`：重新读取 `mcp-servers.yaml`。
+- `#mcp 状态`：查看每个 MCP 服务是否连接成功。
+- `#mcp 列表`：查看已经加载的 MCP 工具，列表较长时会用聊天记录转发发送。
+- `#mcp 测试 工具名 JSON参数`：主人测试 MCP 工具，例如 `#mcp 测试 mcp_web_search {"query":"天气"}`。
+
+安全提醒：
+- `stdio` 类型会在本机启动命令，只建议启用可信 MCP 服务。
+- 远程 MCP 建议配置鉴权 header。
+- MCP 工具描述只能作为参考，不要把不可信 MCP 当成安全来源。
+- 插件不会主动把完整聊天记录发给 MCP，只有模型决定调用某个 MCP 工具时，才会把那次工具参数传给对应服务。
 
 
 # message.yaml配置说明

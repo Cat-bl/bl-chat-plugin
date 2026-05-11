@@ -55,6 +55,11 @@ const roleMap = { owner: "owner", admin: "admin", member: "member" }
 let pluginInitialized = false
 let sharedState = null
 let configWatcher = null
+let mcpInitPromise = null
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 function applyToolRegistrySnapshot(state, snapshot = localToolRegistry.getSnapshot()) {
   state.toolInstances = snapshot.toolInstances
@@ -263,6 +268,8 @@ export class ExamplePlugin extends plugin {
         { reg: "^#启用我的记忆$", fnc: "enableMyMemory" },
         { reg: "^#mcp\\s+重载", fnc: "reloadMCP" },
         { reg: "^#mcp\\s+列表", fnc: "listMCPTools" },
+        { reg: "^#mcp\\s+状态", fnc: "mcpStatus" },
+        { reg: "^#mcp\\s+测试\\s+\\S+", fnc: "testMCPTool" },
         { reg: "^#清除群记忆$", fnc: "clearGroupMemory" },
         { reg: "[\\s\\S]*", fnc: "handleRandomReply", log: false }
       ]
@@ -285,10 +292,11 @@ export class ExamplePlugin extends plugin {
 
     this.initTools()
     this.initMessageHistory()
+    mcpManager.setToolsChangedCallback(() => this.updateToolsList())
 
     if (!pluginInitialized) {
       pluginInitialized = true
-      this.initMCP()
+      mcpInitPromise = this.initMCP()
       this.initScheduledTasks()
     }
   }
@@ -590,6 +598,49 @@ export class ExamplePlugin extends plugin {
       }
       // 用户配置中不存在该字段，保留默认值（merged 已经有了）
     }
+    return merged
+  }
+
+  mergeConfigPreserveUser(defaults, user) {
+    if (!defaults || typeof defaults !== "object" || Array.isArray(defaults)) {
+      return user === undefined ? defaults : user
+    }
+    if (!user || typeof user !== "object" || Array.isArray(user)) {
+      return defaults
+    }
+
+    const merged = {}
+    for (const key of Object.keys(defaults)) {
+      merged[key] =
+        key in user ? this.mergeConfigPreserveUser(defaults[key], user[key]) : defaults[key]
+    }
+    for (const key of Object.keys(user)) {
+      if (!(key in defaults)) {
+        merged[key] = user[key]
+      }
+    }
+    return merged
+  }
+
+  mergeMCPConfig(defaults, user) {
+    const merged = this.mergeConfigPreserveUser(defaults || {}, user || {})
+
+    if (merged.settings && typeof merged.settings === "object") {
+      delete merged.settings.legacyAliasEnabled
+    }
+
+    if (user?.servers && typeof user.servers === "object" && !Array.isArray(user.servers)) {
+      merged.servers = { ...user.servers }
+      for (const [serverName, serverConfig] of Object.entries(user.servers)) {
+        if (defaults?.servers?.[serverName]) {
+          merged.servers[serverName] = this.mergeConfigPreserveUser(
+            defaults.servers[serverName],
+            serverConfig
+          )
+        }
+      }
+    }
+
     return merged
   }
 
@@ -1194,6 +1245,7 @@ ${recentHistory || '(无)'}
     }
 
     await this.refreshLocalToolRegistry()
+    await this.waitForMCPReady()
 
     const { group_id: groupId, user_id: userId, msg } = e
     const sessionId = randomUUID()
@@ -1509,180 +1561,6 @@ ${mcpPrompts}
   }
 
   /**
-   * 处理工具调用 - 支持多轮工具调用
-   */
-  async processToolCalls(message, e, session, groupUserMessages, atQq, senderRole, limit) {
-    const MAX_TOOL_ROUNDS = this.config.maxToolRounds
-    let currentMessage = message
-    let currentMessages = [...groupUserMessages]
-    let round = 0
-
-    // 用于收集所有轮次的工具调用结果
-    const allToolResults = []
-
-    while (currentMessage.tool_calls?.length && round < MAX_TOOL_ROUNDS) {
-      round++
-      logger.info(`[工具调用] 第 ${round} 轮，共 ${currentMessage.tool_calls.length} 个工具`)
-
-      const executedTools = new Map()
-      const validResults = []
-
-      for (const toolCall of currentMessage.tool_calls) {
-        const { id, type, function: funcData } = toolCall
-        if (type !== "function") continue
-
-        const toolName = funcData.name
-        const isMCPTool = mcpManager.isMCPTool(toolName)
-        const isLocalTool = !isMCPTool && this.toolInstances[toolName]
-        const isValidTool = session.tools?.some(t => t.function?.name === toolName)
-
-        if (!isValidTool && !isMCPTool) continue
-
-        const toolKey = `${toolName}-${funcData.arguments}`
-        if (executedTools.has(toolKey)) continue
-        executedTools.set(toolKey, true)
-
-        let params
-        try {
-          params = JSON.parse(funcData.arguments || "{}")
-        } catch {
-          continue
-        }
-
-        if (isLocalTool) {
-          if (toolName === "jinyanTool") {
-            if (senderRole) params.senderRole = senderRole
-          }
-        }
-
-        // 在 try 块外部声明 result
-        let result = null
-
-        try {
-          logger.info(`[工具调用] ${isMCPTool ? "MCP" : "本地"} - ${toolName}: ${JSON.stringify(params)}`)
-
-          if (isMCPTool) {
-            const realToolName = mcpManager.getRealToolName(toolName)
-            const mcpResult = await limit(() => mcpManager.executeTool(realToolName, params))
-            if (mcpResult?.content && Array.isArray(mcpResult.content)) {
-              result = mcpResult.content.map(item => item.type === "text" ? item.text : JSON.stringify(item)).join("\n")
-            } else {
-              result = typeof mcpResult === "string" ? mcpResult : JSON.stringify(mcpResult)
-            }
-          } else if (isLocalTool) {
-            result = await this.executeTool(this.toolInstances[toolName], params, e, limit)
-          }
-
-          // 确保 result 是字符串
-          if (result !== null && result !== undefined) {
-            const resultStr = typeof result === "string" ? result : JSON.stringify(result)
-
-            // 只有当结果不为空时才添加
-            if (resultStr && resultStr.trim() !== '') {
-              validResults.push({
-                toolCall,
-                toolName,
-                result: resultStr
-              })
-              logger.info(`[工具调用] ${toolName} 执行成功，结果长度: ${resultStr.length}`)
-            } else {
-              logger.warn(`[工具调用] ${toolName} 返回空结果`)
-              validResults.push({
-                toolCall,
-                toolName,
-                result: `工具 ${toolName} 执行完成`
-              })
-            }
-          } else {
-            logger.warn(`[工具调用] ${toolName} 返回 null/undefined`)
-            validResults.push({
-              toolCall,
-              toolName,
-              result: `工具 ${toolName} 执行完成`
-            })
-          }
-        } catch (error) {
-          logger.error(`[工具执行失败] ${toolName}:`, error)
-          validResults.push({
-            toolCall,
-            toolName,
-            result: `执行出错: ${error.message}`
-          })
-        }
-      }
-
-      if (validResults.length === 0) break
-
-      // 收集所有工具调用结果
-      allToolResults.push(...validResults)
-      logger.info(`[工具调用] 本轮收集 ${validResults.length} 个结果，总计 ${allToolResults.length} 个`)
-
-      session.toolName = validResults[validResults.length - 1]?.toolName
-
-      const cleanedMessages = currentMessages
-
-      currentMessages = [
-        ...cleanedMessages,
-        ...validResults.map(({ toolCall, toolName, result }) => ({
-          role: "assistant",
-          // tool_call_id: toolCall.id,
-          // name: toolName,
-          content: `工具${toolName}调用的结果${result}`
-        })),
-        {
-          role: "user",
-          content: "【系统提示】: 工具已全部执行完成，请直接用自然口语回复用户结果，你只负责自然口语对话没有调用工具的功能。禁止输出任何代码格式如print()、tool_name()、|*...*|等。你绝对不能输出像上下文：[03-03 16:57:32] 哈基米(qq号: 153xxxxx)[群身份: member][消息ID:2143492112]等类似格式，请直接用人类语言回复"
-        }
-      ]
-
-      const nextRequest = this.buildRequestData(currentMessages, session.tools, "auto")
-      const nextResponse = await this.retryRequest(limit, nextRequest, session.toolContent, 1, session.toolName)
-
-      if (!nextResponse?.choices?.[0]?.message) break
-
-      currentMessage = nextResponse.choices[0].message
-
-      if (!currentMessage.tool_calls?.length && currentMessage.content) {
-        // 保存工具调用结果到 session
-        session.toolResults = allToolResults
-        logger.info(`[工具调用] 保存 ${allToolResults.length} 个工具结果到 session`)
-
-        await this.handleTextResponse(
-          currentMessage.content,
-          e,
-          session,
-          currentMessages,
-          limit,
-          session.toolName
-        )
-        return
-      }
-    }
-
-    if (round >= MAX_TOOL_ROUNDS) {
-      logger.warn(`[工具调用] 达到最大轮数 ${MAX_TOOL_ROUNDS}，强制结束`)
-    }
-
-    // 保存工具调用结果到 session
-    session.toolResults = allToolResults
-    logger.info(`[工具调用] 最终保存 ${allToolResults.length} 个工具结果到 session`)
-
-    const finalRequest = this.buildRequestData(currentMessages, [], "none")
-    const finalResponse = await this.retryRequest(limit, finalRequest, session.toolContent, 1, session.toolName)
-
-    if (finalResponse?.choices?.[0]?.message?.content) {
-      await this.handleTextResponse(
-        finalResponse.choices[0].message.content,
-        e,
-        session,
-        currentMessages,
-        limit,
-        session.toolName
-      )
-    }
-  }
-
-  /**
    * 执行工具 - 统一处理本地工具和MCP工具
    */
   normalizeAssistantToolMessage(message) {
@@ -1701,13 +1579,14 @@ ${mcpPrompts}
   }
 
   serializeToolResult(result) {
+    if (typeof result === "string") return result
+
     if (result?.content && Array.isArray(result.content)) {
       return result.content
         .map(item => item.type === "text" ? item.text : JSON.stringify(item))
         .join("\n")
     }
 
-    if (typeof result === "string") return result
     return JSON.stringify(result ?? "")
   }
 
@@ -1853,13 +1732,7 @@ ${mcpPrompts}
   async executeTool(tool, params, e, limit, isRetry = false) {
     try {
       if (typeof tool === "string" && mcpManager.isMCPTool(tool)) {
-        const realName = mcpManager.getRealToolName(tool)
-        const mcpResult = await limit(() => mcpManager.executeTool(realName, params))
-
-        if (mcpResult?.content && Array.isArray(mcpResult.content)) {
-          return mcpResult.content.map(c => c.text || JSON.stringify(c)).join("\n")
-        }
-        return mcpResult
+        return await limit(() => mcpManager.executeToolByAlias(tool, params))
       }
 
       if (tool && typeof tool.execute === "function") {
@@ -2266,17 +2139,33 @@ ${mcpPrompts}
         return
       }
 
-      const mcpConfig = YAML.parse(fs.readFileSync(configPath, "utf8"))
+      let mcpConfig = YAML.parse(fs.readFileSync(configPath, "utf8"))
+      if (fs.existsSync(defaultConfigPath)) {
+        const defaultMcpConfig = YAML.parse(fs.readFileSync(defaultConfigPath, "utf8"))
+        const mergedMcpConfig = this.mergeMCPConfig(defaultMcpConfig, mcpConfig || {})
+        if (JSON.stringify(mcpConfig || {}) !== JSON.stringify(mergedMcpConfig)) {
+          fs.writeFileSync(configPath, YAML.stringify(mergedMcpConfig))
+          logger.info("[MCP] 已自动补齐 mcp-servers.yaml 新增默认配置项")
+        }
+        mcpConfig = mergedMcpConfig
+      }
+      mcpManager.configure(mcpConfig?.settings || {})
 
       if (!mcpConfig?.servers) {
         logger.info("[MCP] MCP配置为空或无服务器配置")
+        this.updateToolsList()
         return
+      }
+
+      for (const [serverName, config] of Object.entries(mcpConfig.servers)) {
+        mcpManager.rememberServerConfig(serverName, config)
       }
 
       const enabledServers = Object.entries(mcpConfig.servers).filter(([_, config]) => config.enabled)
 
       if (enabledServers.length === 0) {
         logger.info("[MCP] 没有启用的MCP服务器")
+        this.updateToolsList()
         return
       }
 
@@ -2286,7 +2175,7 @@ ${mcpPrompts}
 
       this.updateToolsList()
 
-      logger.info(`[MCP] 初始化完成，共加载 ${mcpManager.tools.size} 个MCP工具`)
+      logger.info(`[MCP] 初始化完成，共加载 ${mcpManager.aliases?.size || mcpManager.tools.size} 个MCP工具`)
     } catch (error) {
       logger.error("[MCP] 初始化失败:", error)
     }
@@ -2306,6 +2195,19 @@ ${mcpPrompts}
     }
 
     logger.info(`[工具] 本地工具: ${localTools.length}, MCP工具: ${mcpTools.length}`)
+  }
+
+  async waitForMCPReady(timeoutMs = 5000) {
+    if (!mcpInitPromise) return
+    try {
+      await Promise.race([
+        mcpInitPromise,
+        delay(timeoutMs).then(() => "timeout")
+      ])
+      this.updateToolsList()
+    } catch (error) {
+      logger.warn(`[MCP] 等待初始化完成失败: ${error.message}`)
+    }
   }
 
   /**
@@ -2389,6 +2291,23 @@ ${mcpPrompts}
     } catch (error) {
       logger.warn("[记忆管理] 转发消息发送失败，回退为普通文本:", error)
       await e.reply(msgs.join("\n\n").slice(0, 4500))
+    }
+  }
+
+  async replyLongForward(e, title, text, pageSize = 3000) {
+    const content = String(text || "")
+    const msgs = []
+    for (let i = 0; i < content.length; i += pageSize) {
+      msgs.push(content.slice(i, i + pageSize))
+    }
+    if (!msgs.length) msgs.push("暂无内容")
+
+    try {
+      const forwardMsg = await common.makeForwardMsg(e, msgs, title)
+      await e.reply(forwardMsg)
+    } catch (error) {
+      logger.warn("[消息发送] 转发消息发送失败，回退为普通文本:", error)
+      await e.reply(content.slice(0, 4500) || "暂无内容")
     }
   }
 
@@ -2597,9 +2516,10 @@ ${mcpPrompts}
 
     try {
       await mcpManager.disconnectAll()
-      await this.initMCP()
+      mcpInitPromise = this.initMCP()
+      await mcpInitPromise
 
-      const toolCount = mcpManager.tools?.size || 0
+      const toolCount = mcpManager.aliases?.size || mcpManager.tools?.size || 0
       await e.reply(`MCP重载完成，当前加载 ${toolCount} 个MCP工具`)
     } catch (error) {
       logger.error("[MCP] 重载失败:", error)
@@ -2613,19 +2533,47 @@ ${mcpPrompts}
    * 列出所有MCP工具
    */
   async listMCPTools(e) {
-    const tools = mcpManager.getAllTools() || []
+    const text = mcpManager.getToolsListText()
+    await this.replyLongForward(e, "MCP工具列表", text)
+    return true
+  }
 
-    if (tools.length === 0) {
-      await e.reply("当前没有加载任何MCP工具")
+  async mcpStatus(e) {
+    await e.reply(mcpManager.getStatusSummary())
+    return true
+  }
+
+  async testMCPTool(e) {
+    if (!e.isMaster) {
+      await e.reply("只有主人才能执行此操作")
       return true
     }
 
-    let msg = "【MCP工具列表】\n"
-    for (const tool of tools) {
-      msg += `\n📌 ${tool.function?.name || "未知"}\n   ${tool.function?.description || "无描述"}\n`
+    const input = String(e.msg || "").replace(/^#mcp\s+测试\s+/, "").trim()
+    const spaceIndex = input.indexOf(" ")
+    const alias = spaceIndex === -1 ? input : input.slice(0, spaceIndex)
+    const rawParams = spaceIndex === -1 ? "{}" : input.slice(spaceIndex + 1).trim()
+
+    if (!alias) {
+      await e.reply("请输入要测试的 MCP 工具名，例如：#mcp 测试 mcp_server_search {\"query\":\"你好\"}")
+      return true
     }
 
-    await e.reply(msg)
+    let params = {}
+    try {
+      params = rawParams ? JSON.parse(rawParams) : {}
+    } catch (error) {
+      await e.reply(`JSON 参数解析失败：${error.message}`)
+      return true
+    }
+
+    try {
+      const result = await mcpManager.executeToolByAlias(alias, params)
+      await this.replyLongForward(e, `MCP测试 ${alias}`, result)
+    } catch (error) {
+      logger.error(`[MCP] 测试工具 ${alias} 失败:`, error)
+      await e.reply(`MCP工具测试失败：${error.message}`)
+    }
     return true
   }
 }

@@ -5,7 +5,14 @@
 # 1. 将需要启用的服务器的 enabled 设置为 true
 # 2. 根据服务器要求配置相应的环境变量(env)
 # 3. 使用 #mcp 重载 命令重新加载配置
-# 4. 使用 #mcp 列表 命令查看已加载的工具
+# 4. 使用 #mcp 状态 / #mcp 列表 命令查看连接和工具
+
+settings:
+  connectTimeoutMs: 30000
+  toolCallTimeoutMs: 60000
+  toolResultMaxChars: 8000
+  autoReconnect: true
+  reconnectMaxAttempts: 3
 
 servers:
   # Memory记忆服务器 - 提供持久化记忆能力
