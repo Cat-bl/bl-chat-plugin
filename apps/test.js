@@ -53,6 +53,145 @@ const trackingThrottle = new Map() // 节流: key: `${groupId}_${userId}`, value
 const pendingJudgments = [] // 批量判断队列
 let batchTimer = null // 批量处理定时器
 const roleMap = { owner: "owner", admin: "admin", member: "member" }
+const FINAL_REPLY_TOOL_GUARD_MARKER = "[final_reply_tool_guard]"
+const FINAL_REPLY_TOOL_GUARD_WITH_TOOLS = `${FINAL_REPLY_TOOL_GUARD_MARKER}
+如需调用工具，只能使用接口提供的 tools/tool_calls 字段，禁止把工具调用写进回复正文。
+最终回复只能是发给用户看的自然口语，禁止输出伪工具格式、代码块、函数调用、动作标记。
+禁止示例：[voice]内容、[voice:内容]、[tool]内容、<tool>...</tool>、voiceTool(...)、tool_name(...)、print(...)、|*...*|。`
+const FINAL_REPLY_TOOL_GUARD_NO_TOOLS = `${FINAL_REPLY_TOOL_GUARD_MARKER}
+工具已经执行完成，当前不能再调用任何工具。
+请直接用自然口语回复用户结果，禁止把工具调用写进回复正文。
+禁止输出伪工具格式、代码块、函数调用、动作标记。
+禁止示例：[voice]内容、[voice:内容]、[tool]内容、<tool>...</tool>、voiceTool(...)、tool_name(...)、print(...)、|*...*|。`
+const PSEUDO_TOOL_MARKERS = [
+  "tool", "tools", "tool_call", "toolcall", "function", "function_call", "functioncall", "func", "call", "voice", "audio", "tts", "image", "img",
+  "video", "file", "send", "reply", "search", "google", "mcp", "banana", "reminder",
+  "poke", "like", "music", "weather", "map", "draw", "generate", "edit",
+  "工具", "工具调用", "函数", "函数调用", "调用", "语音", "音频", "图片", "图像", "视频", "文件", "发送",
+  "回复", "搜索", "生图", "画图", "修图", "提醒", "戳", "点赞", "点歌", "天气", "地图"
+]
+const PSEUDO_TOOL_MARKER_SET = new Set(PSEUDO_TOOL_MARKERS.map(item => item.toLowerCase()))
+const PSEUDO_TOOL_TEXT_KEYS = ["text", "content", "message", "reply", "spoken_text", "speech", "voice"]
+
+function isPseudoToolMarker(marker = "") {
+  const normalized = String(marker || "")
+    .trim()
+    .replace(/tool$/i, "")
+    .replace(/工具$/, "")
+    .toLowerCase()
+  return PSEUDO_TOOL_MARKER_SET.has(normalized) || PSEUDO_TOOL_MARKER_SET.has(`${normalized}tool`)
+}
+
+function extractReadableTextFromObject(value) {
+  if (!value || typeof value !== "object") return ""
+  for (const key of PSEUDO_TOOL_TEXT_KEYS) {
+    if (typeof value[key] === "string" && value[key].trim()) return value[key].trim()
+  }
+  for (const key of ["arguments", "args", "params", "input"]) {
+    const nested = extractReadableTextFromObject(value[key])
+    if (nested) return nested
+  }
+  return ""
+}
+
+function extractReadableTextFromPseudoCall(args = "") {
+  const rawArgs = String(args || "").trim()
+  if (!rawArgs) return ""
+
+  const quotedOnly = rawArgs.match(/^["'`]([\s\S]*?)["'`]$/)
+  if (quotedOnly) return quotedOnly[1].trim()
+
+  const textArg = rawArgs.match(/(?:^|[,{\s])(?:text|content|message|reply|spoken_text|speech|voice)\s*[:=]\s*["'`]([\s\S]*?)["'`](?:[,}\s]|$)/i)
+  if (textArg) return textArg[1].trim()
+
+  const jsonLike = rawArgs.match(/^\s*(\{[\s\S]*\}|\[[\s\S]*\])\s*$/)
+  if (jsonLike) {
+    try {
+      const parsed = JSON.parse(jsonLike[1])
+      return extractReadableTextFromObject(parsed)
+    } catch {}
+  }
+
+  return ""
+}
+
+function sanitizePseudoToolLine(line) {
+  const rawLine = String(line || "")
+  let current = rawLine.trim()
+  if (!current) return ""
+
+  current = current
+    .replace(/^\|?\*+\s*/, "")
+    .replace(/\s*\*+\|?$/, "")
+    .trim()
+
+  const wrappedTag = current.match(/^<\s*([a-zA-Z_][\w-]*|工具|函数|调用)[^>]*>([\s\S]*?)<\/\s*\1\s*>$/i)
+  if (wrappedTag && isPseudoToolMarker(wrappedTag[1])) {
+    return sanitizePseudoToolLine(wrappedTag[2])
+  }
+
+  const bracketWithColon = current.match(/^[\[【]\s*([^:：\]】\s]{1,32})\s*[:：]\s*([\s\S]*?)[\]】]$/)
+  if (bracketWithColon && isPseudoToolMarker(bracketWithColon[1])) {
+    return sanitizePseudoToolLine(bracketWithColon[2])
+  }
+
+  const bracketPrefix = current.match(/^[\[【]\s*([^\]】\s]{1,32})\s*[\]】]\s*([\s\S]*)$/)
+  if (bracketPrefix && isPseudoToolMarker(bracketPrefix[1])) {
+    return sanitizePseudoToolLine(bracketPrefix[2])
+  }
+
+  const labelPrefix = current.match(/^([A-Za-z_][\w-]*|工具|函数|调用|工具调用|函数调用)\s*[:：]\s*([\s\S]*)$/i)
+  if (labelPrefix && isPseudoToolMarker(labelPrefix[1])) {
+    return sanitizePseudoToolLine(labelPrefix[2])
+  }
+
+  try {
+    const parsed = JSON.parse(current)
+    const hasToolShape = parsed && typeof parsed === "object" &&
+      (parsed.tool || parsed.tool_name || parsed.name || parsed.function || parsed.arguments || parsed.args)
+    if (hasToolShape) {
+      const readable = extractReadableTextFromObject(parsed)
+      return readable ? sanitizePseudoToolLine(readable) : null
+    }
+  } catch {}
+
+  const functionCall = current.match(/^([A-Za-z_][\w.-]{0,80})\s*\(([\s\S]*)\)$/)
+  if (functionCall) {
+    const functionName = functionCall[1]
+    const lowerName = functionName.toLowerCase()
+    const looksLikeToolCall =
+      lowerName === "print" ||
+      lowerName === "console.log" ||
+      lowerName.startsWith("mcp_") ||
+      lowerName.includes("tool") ||
+      lowerName.endsWith("tool") ||
+      PSEUDO_TOOL_MARKER_SET.has(lowerName) ||
+      isPseudoToolMarker(functionName)
+
+    if (looksLikeToolCall) {
+      const readable = extractReadableTextFromPseudoCall(functionCall[2])
+      return readable ? sanitizePseudoToolLine(readable) : null
+    }
+  }
+
+  return rawLine
+}
+
+function sanitizeFinalReplyText(content) {
+  let output = String(content || "").replace(/\r\n/g, "\n").trim()
+  if (!output) return ""
+
+  output = ThinkingProcessor.removeThinking(output).trim()
+  output = output.replace(/^\s*```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```\s*$/g, "$1").trim()
+  output = output.replace(/^\s*`([^`]+)`\s*$/g, "$1").trim()
+
+  const lines = output.split("\n")
+  const sanitizedLines = lines
+    .map(line => sanitizePseudoToolLine(line))
+    .filter(line => line !== null && String(line).trim() !== "")
+
+  return sanitizedLines.join("\n").replace(/\n{3,}/g, "\n").trim()
+}
 
 let pluginInitialized = false
 let sharedState = null
@@ -1030,9 +1169,10 @@ export class ExamplePlugin extends plugin {
 
   buildRequestData(messages, tools, toolChoice = "auto") {
     const provider = this.getProvider()
+    const guardedMessages = this.withFinalReplyGuard(messages, tools, toolChoice)
     const data = {
       model: this.getModel(),
-      messages,
+      messages: guardedMessages,
       temperature: 0.7,
       top_p: 0.9
     }
@@ -1042,6 +1182,16 @@ export class ExamplePlugin extends plugin {
       data.tool_choice = toolChoice
     }
     return data
+  }
+
+  withFinalReplyGuard(messages = [], tools = [], toolChoice = "auto") {
+    const hasTools = this.config.useTools && tools?.length && toolChoice !== "none"
+    const guardContent = hasTools ? FINAL_REPLY_TOOL_GUARD_WITH_TOOLS : FINAL_REPLY_TOOL_GUARD_NO_TOOLS
+    const baseMessages = hasTools ? messages : removeToolPromptsFromMessages(messages)
+    const cleanMessages = baseMessages.filter(
+      msg => !(msg.role === "system" && typeof msg.content === "string" && msg.content.includes(FINAL_REPLY_TOOL_GUARD_MARKER))
+    )
+    return [...cleanMessages, { role: "system", content: guardContent }]
   }
 
   async checkTriggers(e) {
@@ -1999,6 +2149,10 @@ ${mcpPrompts}
 
   async handleTextResponse(content, e, session, messages, limit, toolName) {
     const output = await this.processToolSpecificMessage(content, toolName)
+    if (!output) {
+      logger.warn("[最终回复清理] 模型回复只包含伪工具格式，已跳过发送")
+      return
+    }
     const botMessageId = await limit(() => this.sendSegmentedMessage(e, output))
 
     // 更新会话追踪中的对话历史
@@ -2016,7 +2170,7 @@ ${mcpPrompts}
         chatHistory.push({ role: 'user', content: userMsg })
 
         // 添加机器人回复
-        const botMsg = `${this.formatTime()} ${this.config.botName || Bot.nickname}(QQ号:${Bot.uin})[群身份: member]: 在群里说: ${content.substring(0, 200)}`
+        const botMsg = `${this.formatTime()} ${this.config.botName || Bot.nickname}(QQ号:${Bot.uin})[群身份: member]: 在群里说: ${output.substring(0, 200)}`
         chatHistory.push({ role: 'bot', content: botMsg })
 
         // 只保留最近10条
@@ -2070,7 +2224,7 @@ ${mcpPrompts}
         group_id: e.group_id,
         message_id: botMessageId,
         time: now + (session.toolResults?.length || 0) + 1,
-        message: [{ type: "text", text: content }],
+        message: [{ type: "text", text: output }],
         source: "send",
         self_id: Bot.uin,
         sender: { user_id: Bot.uin, nickname: Bot.nickname, card: Bot.nickname, role: "member" }
@@ -2101,13 +2255,13 @@ ${mcpPrompts}
       }
     }
 
-    messages.push({ role: "assistant", content })
+    messages.push({ role: "assistant", content: output })
     session.groupUserMessages = this.trimMessageHistory(messages)
     await limit(() => this.saveGroupUserMessages(e.group_id, e.user_id, messages))
 
     // 更新情感、记忆、表达学习（异步，不阻塞）
     // 使用 e.msg 纯消息内容，而不是格式化的 userContent
-    this.updateEnhancedSystems(e, e.msg || '', content).catch(err => {
+    this.updateEnhancedSystems(e, e.msg || '', output).catch(err => {
       logger.error('[增强系统] 更新失败:', err)
     })
   }
@@ -2159,6 +2313,8 @@ ${mcpPrompts}
 
   async sendSegmentedMessage(e, output, quoteChance = 0.5) {
     try {
+      output = sanitizeFinalReplyText(output)
+      if (!output) return null
       const shouldQuote = Math.random() < quoteChance
       const { hasAt, msgSegments } = await this.convertAtInString(output, e.group)
 
@@ -2293,7 +2449,7 @@ ${mcpPrompts}
   }
 
   processToolSpecificMessage(content, toolName) {
-    let output = content.replace(/\n/g, "\n")
+    let output = sanitizeFinalReplyText(content.replace(/\n/g, "\n"))
 
     // 过滤消息记录格式（多行全局匹配）
     // 匹配如: "[01-27 16:12:51] 哈基米(QQ号: 2127498644)[群身份: member]: 以后注意点。"
@@ -2319,7 +2475,7 @@ ${mcpPrompts}
     output = output.replace(/!?$$(.*?)$$(.∗?)(.∗?)/g, "$1\n- $2")
     // 清理多余空行
     output = output.replace(/\n{3,}/g, '\n').trim()
-    return output.trim()
+    return sanitizeFinalReplyText(output)
   }
 
   getSessionState(e) {

@@ -251,37 +251,8 @@ function moveFinalToolPromptToEnd(messages = []) {
 
 function summarizeToolResultForChat(toolName, content = '') {
     const text = String(content || '');
-
-    if (toolName === 'voiceTool') {
-        const match = text.match(/发送语音内容\(([\s\S]*?)\)成功/) || text.match(/é™æˆ¦â‚¬ä½½î‡¢é—Šå†²å”´ç€¹\?([\s\S]*?)\)/);
-        const spokenText = match?.[1] || '';
-        return [
-            `name: ${toolName}`,
-            'status: success',
-            spokenText ? `spoken_text: ${spokenText}` : null
-        ].filter(Boolean).join('\n');
-    }
-
-    if (toolName === 'pokeTool') {
-        try {
-            const parsed = JSON.parse(text);
-            const targets = parsed.success?.targets || [];
-            const totalTimes = targets.reduce((sum, item) => sum + (Number(item.times) || 0), 0);
-            return [
-                `name: ${toolName}`,
-                `status: ${parsed.errors?.length ? 'partial_success' : 'success'}`,
-                `target_count: ${targets.length}`,
-                `total_times: ${totalTimes}`,
-                `raw: ${text}`
-            ].join('\n');
-        } catch {
-            return `name: ${toolName}\ncontent: ${text}`;
-        }
-    }
-
     return `name: ${toolName}\ncontent: ${text}`;
 }
-
 function processResponse(responseData) {
     // 处理数组响应（兼容某些 API 返回数组的情况）
     if (Array.isArray(responseData) && responseData.length > 0) {
