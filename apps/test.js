@@ -2214,9 +2214,6 @@ ${mcpPrompts}
       session.tools = this.tools
     }
 
-    if (!options.silent) {
-      logger.info(`[工具] 本地工具: ${localTools.length}, MCP工具: ${mcpTools.length}`)
-    }
   }
 
   async waitForMCPReady(timeoutMs = 5000) {
