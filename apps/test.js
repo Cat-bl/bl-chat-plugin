@@ -206,6 +206,31 @@ function toolConfigHasName(toolNames, name) {
   return Array.isArray(toolNames) && toolNames.some(item => parseToolConfigEntry(item).name === name)
 }
 
+function isCodeOrMarkdownRequest(text = "") {
+  const content = String(text || "").toLowerCase()
+  return /写.*(代码|算法|函数|脚本|程序|markdown|md|文档)|给.*(代码|示例代码|算法|markdown|md文档)|实现.*(算法|函数|代码|脚本|程序)|生成.*(代码|markdown|md文档|文档)|编写.*(代码|markdown|md|文档)|代码给我|md文档|markdown文档|代码截图/.test(content)
+}
+
+function looksLikeCodeOrMarkdown(text = "") {
+  const content = String(text || "")
+  if (/```[\s\S]*```/.test(content)) return true
+  if (/^\s{0,3}#{1,4}\s+\S/m.test(content) && content.split(/\r?\n/).length >= 3) return true
+  if (/^\s*\|.+\|\s*$/m.test(content) && /^\s*\|[-:\s|]+\|\s*$/m.test(content)) return true
+
+  const lines = content.split(/\r?\n/)
+  const nonEmptyLines = lines.filter(line => line.trim())
+  if (nonEmptyLines.length < 3) return false
+
+  const codeLineCount = nonEmptyLines.filter(line =>
+    /^\s*(def|class|for|if|elif|else|while|return|import|from|print|break|continue|const|let|var|function|class|export|switch|try|catch|public|private|static|package|func|fn)\b/.test(line) ||
+    /^\s{2,}\S/.test(line) ||
+    /[A-Za-z_$][\w$.\[\]]*\s*(?:=|==|===|>|<|\+|-|\*|\/)/.test(line) ||
+    /[{}();]/.test(line)
+  ).length
+
+  return codeLineCount >= 2
+}
+
 function applyToolRegistrySnapshot(state, snapshot = localToolRegistry.getSnapshot()) {
   state.toolInstances = snapshot.toolInstances
   state.functions = snapshot.functions
@@ -516,6 +541,33 @@ export class ExamplePlugin extends plugin {
     })
 
     logger.info('[定时任务] 提醒检查任务已启动（每秒）')
+  }
+
+  shouldUseTextImageForFinalReply({ content, output, session, toolName, e }) {
+    if (toolName === "textImageTool") return false
+    if (!toolConfigHasName(this.config.oneapi_tools, "textImageTool")) return false
+    if (!this.toolInstances?.textImageTool?.execute) return false
+
+    const userText = `${session?.userContent || ""}\n${e?.msg || ""}`
+    const userAskedForCodeOrMarkdown = isCodeOrMarkdownRequest(userText)
+    const replyLooksLikeCodeOrMarkdown = looksLikeCodeOrMarkdown(content) || looksLikeCodeOrMarkdown(output)
+
+    return replyLooksLikeCodeOrMarkdown || (userAskedForCodeOrMarkdown && String(output || "").trim().length > 30)
+  }
+
+  async sendFinalReplyAsTextImage(e, output, limit) {
+    const tool = this.toolInstances?.textImageTool
+    try {
+      const result = await limit(() => tool.execute({ text: output }, e))
+      if (typeof result === "string" && result.trim().startsWith("error:")) {
+        throw new Error(result)
+      }
+      logger.info("[textImageTool] 最终回复已转为图片发送")
+      return null
+    } catch (error) {
+      logger.warn(`[textImageTool] 最终回复转图失败，回退为普通文本: ${error.message}`)
+      return await limit(() => this.sendSegmentedMessage(e, output))
+    }
   }
 
   /**
@@ -2131,7 +2183,16 @@ ${mcpPrompts}
       logger.warn("[最终回复清理] 模型回复只包含伪工具格式，已跳过发送")
       return
     }
-    const botMessageId = await limit(() => this.sendSegmentedMessage(e, output))
+    const shouldUseTextImage = this.shouldUseTextImageForFinalReply({
+      content,
+      output,
+      session,
+      toolName,
+      e
+    })
+    const botMessageId = shouldUseTextImage
+      ? await this.sendFinalReplyAsTextImage(e, output, limit)
+      : await limit(() => this.sendSegmentedMessage(e, output))
 
     // 更新会话追踪中的对话历史
     if (this.config.conversationTrackingEnabled && e.group_id && e.user_id) {
