@@ -7,7 +7,7 @@ export default [
     field: "knowledgeSystem.enabled",
     label: "知识库开关",
     component: "Switch",
-    bottomHelpMessage: "开启需要配置 embeddingAiConfig。基于 Embedding 向量检索的知识库"
+    bottomHelpMessage: "开启前需在「AI 模型配置」页填好 embeddingAiConfig。基于 Embedding 向量检索的知识库"
   },
   {
     field: "knowledgeSystem.topN",

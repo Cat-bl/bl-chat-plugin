@@ -7,7 +7,7 @@ export default [
     field: "memorySystem.enabled",
     label: "长期记忆开关",
     component: "Switch",
-    bottomHelpMessage: "开启需要配置 memoryAiConfig。每个群的每个用户独立记忆，群记忆作为群共识独立维护"
+    bottomHelpMessage: "开启前需在「AI 模型配置」页填好 memoryAiConfig。每个群的每个用户独立记忆，群记忆作为群共识独立维护"
   },
   {
     field: "memorySystem.maxFactsPerUser",
@@ -90,7 +90,7 @@ export default [
     field: "memorySystem.semanticRecallEnabled",
     label: "语义召回开关",
     component: "Switch",
-    bottomHelpMessage: "开启需要额外配置 embeddingAiConfig，默认关闭即可"
+    bottomHelpMessage: "开启前需在「AI 模型配置」页填好 embeddingAiConfig，默认关闭即可"
   },
   {
     field: "memorySystem.semanticRecallTopK",

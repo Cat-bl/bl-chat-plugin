@@ -34,7 +34,7 @@ export default [
     field: "expressionLearning.aiLearningEnabled",
     label: "AI 场景化学习开关",
     component: "Switch",
-    bottomHelpMessage: "使用 AI 提取表达模式，未配 memoryAiConfig 时降级为词频统计"
+    bottomHelpMessage: "使用 AI 提取表达模式（复用「AI 模型配置」页的 memoryAiConfig），未配置时降级为词频统计"
   },
   {
     field: "expressionLearning.aiLearningMessageThreshold",

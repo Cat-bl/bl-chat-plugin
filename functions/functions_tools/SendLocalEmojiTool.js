@@ -11,6 +11,7 @@ export class SendLocalEmojiTool extends AbstractTool {
     super()
     this.name = "sendLocalEmojiTool"
     this.description = [
+      "此工具你可以积极主动调用",
       "从本地表情包库挑选一张合适的表情包发送到当前会话。",
       "适合场景：情绪共鸣（笑/无奈/惊讶/共鸣）、玩笑接梗、表达态度。",
       "不适合场景：严肃问答、技术讨论、对方在咨询正式问题或寻求帮助。",

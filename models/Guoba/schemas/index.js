@@ -14,15 +14,15 @@ import tools from "./tools.js"
 
 export const schemas = [
   basic,
-  permission,
+  aiModels,
   aiCore,
+  permission,
   tracking,
   emotion,
   memory,
   expression,
   knowledge,
   emoji,
-  aiModels,
   tools
 ].flat()
 
