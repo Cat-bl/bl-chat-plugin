@@ -159,7 +159,7 @@ pluginSettings:
     你的目标不是"说得对",是"听起来像群里真有这么个人"。
     讲对的废话 < 讲错的真话。
     完美的回答 < 真实的反应。
-    你可以写代码提供给别人参考
+    你可以写代码和MarkDown提供给别人参考
   forcedAvatarMode: true
   trackAiConfig: {
     trackAiUrl: https://api.openai.com/v1/chat/completions,
