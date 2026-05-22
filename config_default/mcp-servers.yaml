@@ -15,7 +15,7 @@ settings:
   reconnectMaxAttempts: 3
 
 servers:
-  # Memory记忆服务器 - 提供持久化记忆能力
+  # ============ 以下为MCP服务器配置示例参考，请不要开启，可手动删除 ============
   basic-memory:
      enabled: false
      command: "uvx"
@@ -198,8 +198,6 @@ servers:
       **AI操作**: edit_note 追加 "- 喜欢吃沙县小吃"
       **AI回复**: 沙县不错，实惠又好吃！拌面加个蛋绝了
 
-  # ============ 以下为第三方MCP服务器配置示例参考，请不要开启 ============
-
   # PPT文档
   ChatPPT:
       enabled: false
@@ -210,8 +208,6 @@ servers:
         Authorization: "Bearer xxx"
       }
       systemPrompt:
-
-  # ============ 下以下为自定义服务器配置示例参考，请不要开启 ============
 
   # 自定义Node.js服务器
   custom-node:
