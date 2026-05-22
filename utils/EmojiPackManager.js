@@ -18,7 +18,7 @@ const DEFAULT_EMOJI_CONFIG = {
   visionTagOnAdd: true,
   useEmbedding: true,
   selectionTopK: 5,
-  embeddingThreshold: 0.35,
+  embeddingThreshold: 0.5,
   contentFiltration: false,
   doReplace: false,
   enableMaintenance: false,

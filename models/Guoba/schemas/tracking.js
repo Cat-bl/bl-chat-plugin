@@ -132,7 +132,7 @@ export default [
     label: "新消息打断静默 (ms)",
     component: "InputNumber",
     bottomHelpMessage: "smart 模式: 准备回复前先等待这么久看有没有新消息，避免抢答；0=关闭",
-    componentProps: { min: 0, max: 5000, step: 100, placeholder: "800" }
+    componentProps: { min: 0, max: 5000, step: 100, placeholder: "1500" }
   },
   {
     field: "smartTrigger.maxConsecutiveInterrupts",

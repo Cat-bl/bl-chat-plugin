@@ -519,7 +519,7 @@ MCP 管理命令：
 |--------|------|--------|------|
 | `useEmbedding` | boolean | `true` | 是否给表情生成 embedding 向量（基于标签+描述）用于 L1 语义召回。关掉则降级到 Levenshtein 标签匹配 |
 | `selectionTopK` | int | `5` | embedding 召回取相似度 top-K，再从中随机一张 |
-| `embeddingThreshold` | float | `0.35` | cosine 相似度低于此值不进候选。0.3 太宽召回近似纯随机，0.5 太严小库易降级，0.35 是兼顾小库友好的折中 |
+| `embeddingThreshold` | float | `0.5` | cosine 相似度低于此值不进候选。0.3 太宽召回近似随机，0.5 是中文 embedding 较稳的默认；小库（<50 张）匹配率低时可降到 0.35-0.4 |
 
 #### 满额替换 + 周期维护
 
@@ -637,7 +637,7 @@ MCP 管理命令：
 | `gateContextSize` | int | `10` | 喂给 Gate 的群历史条数（越大决策越准但 token 越贵） |
 | `inevitableAtReply` | boolean | `true` | 消息含 @bot 或 `triggerPrefixes` 时强制回复（跳过 Gate/cooldown/debounce） |
 | `mentionedNameReply` | boolean | `false` | 非 @ 且不在 `triggerPrefixes` 里、但消息含机器人昵称（取 `Bot.nickname`）时也强制触发 |
-| `replyDebounceMs` | int | `800` | 准备回复前等多少毫秒看新消息，有新消息让步本轮；0=关 |
+| `replyDebounceMs` | int | `1500` | 准备回复前等多少毫秒看新消息，有新消息让步本轮；0=关 |
 | `maxConsecutiveInterrupts` | int | `3` | 同群连续被打断的上限，超过强制走完；0=每次都让步 |
 | `activeChatTtlHours` | int | `24` | 群超过这么多小时无消息从内存淘汰（每 1 小时扫描） |
 | `proactiveReplyNoQuote` | boolean | `true` | Gate 主动触发的回复（非 @/前缀）不带"引用消息"格式，更像群友自然插话 |

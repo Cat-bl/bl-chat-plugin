@@ -71,8 +71,8 @@ export default [
     field: "emojiSystem.embeddingThreshold",
     label: "相似度阈值",
     component: "InputNumber",
-    bottomHelpMessage: "cosine 相似度低于此值的不进入候选。0.3 太宽容易随机，0.5 太严小库经常没结果，0.35 是小库友好的折中值",
-    componentProps: { min: 0, max: 1, step: 0.05, placeholder: "0.35" }
+    bottomHelpMessage: "cosine 相似度低于此值的不进入候选。0.3 太宽容易随机，0.5 是中文 embedding 较稳的默认；小库（<50 张）匹配率低时可降到 0.35-0.4",
+    componentProps: { min: 0, max: 1, step: 0.05, placeholder: "0.5" }
   },
 
   // ===== 满额替换与文件维护 =====

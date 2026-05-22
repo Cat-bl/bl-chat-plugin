@@ -22,7 +22,7 @@ pluginSettings:
   chatTriggerMode: strict
   # smart 模式专属配置
   smartTrigger:
-    talkValue: 0.07                      # 频率 0.01-1.0；1=每条消息都跑 Gate（token 消耗大），0.15=约 7 条触发一次（推荐折中），0.1=10 条触发一次
+    talkValue: 0.07                      # 频率 0.01-1.0；1=每条消息都跑 Gate（token 消耗大），0.15=约 7 条触发一次，0.1=10 条触发一次，0.07=约 15 条触发一次（默认折中偏保守）
     idleCompensationEnabled: true        # 冷群空窗补偿：按时间折算等效消息数凑触发条件
     avgLatencyDefaultMs: 60000           # 平均回复延迟初始值（冷启动 fallback）
     timingGateCooldownSeconds: 15        # Gate 判 no_action 后的冷却秒数
@@ -35,7 +35,7 @@ pluginSettings:
       - { range: "08:00-22:59", value: 0.07 }
       - { range: "23:00-23:59", value: 0.05 }
       - { range: "00:00-07:59", value: 0.034 }
-    replyDebounceMs: 800                 # 准备回复前先等待这么久看有没有新消息（防"对方没说完就抢答"）；0=关
+    replyDebounceMs: 1500                # 准备回复前先等待这么久看有没有新消息（防"对方没说完就抢答"）；0=关
     maxConsecutiveInterrupts: 3          # 同一群被新消息连续打断的最大次数；超过后强制走完不再让步；0=每次都让步
     activeChatTtlHours: 24               # 群超过这么多小时没有新消息后从内存状态淘汰
     proactiveReplyNoQuote: true          # smart 模式 Gate 主动触发的回复不带"引用消息"格式（更像群友自然插话，而非"回复某人"）；@/前缀触发的回复仍按正常引用概率
@@ -237,7 +237,7 @@ pluginSettings:
     visionTagOnAdd: true
     useEmbedding: true
     selectionTopK: 5
-    embeddingThreshold: 0.35
+    embeddingThreshold: 0.5
     contentFiltration: false
     doReplace: false
     enableMaintenance: false
