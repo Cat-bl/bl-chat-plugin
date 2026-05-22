@@ -40,6 +40,32 @@ pluginSettings:
     activeChatTtlHours: 24               # 群超过这么多小时没有新消息后从内存状态淘汰
     proactiveReplyNoQuote: true          # smart 模式 Gate 主动触发的回复不带"引用消息"格式（更像群友自然插话，而非"回复某人"）；@/前缀触发的回复仍按正常引用概率
     typingSpeed: 0                       # 拟人化打字速度：每秒发送 N 个字符（调节段间延迟，两种模式都生效）；0=默认公式(1s起步+字符延展)，建议 8-25
+    # ─── 拟人化对话焦点（FOCUS/FADING/COLD 三态机）─────────────────
+    focusDurationMs: 180000              # bot 主动回复后 FOCUS 持续时间（保守 3 分钟，期间每条新消息都强制走 Gate）
+    fadingDurationMs: 90000              # FOCUS 降级后 FADING 余热持续时间（1.5 分钟，期间阈值减半）
+    focusMaxReplies: 2                   # 一轮 FOCUS 内 bot 最多主动回复次数（超过强制降级 FADING，防连刷）
+    focusMaxNoAction: 2                  # FOCUS 期 Gate 连续 no_action 次数到此就降级 FADING
+    fadingForceGate: false               # FADING 期是否强制走 Gate（false=仅靠阈值减半，保守）
+    # ─── "等 bot 回应"识别（保证不漏接续话题）─────────────────
+    quickResponseMs: 30000               # R1：bot 发言后此时间内的任何消息都视为 continuation_strong（人类秒回反射）
+    continuationLookbackMs: 180000       # R2/R3/R4：关键词/问句/反馈词识别的时间窗
+    continuationKeywordMatch: true       # 启用关键词匹配（R2）
+    continuationQuestionMatch: true      # 启用问句信号识别（R3）
+    continuationFeedbackMatch: true      # 启用反馈词识别（R4）
+    continuationKeywordMaxCount: 5       # 每次提取最多保留的 bot 上次发言关键词数量
+    # ─── Bot 速率硬上限（防刷屏的最终防线）─────────────────
+    maxRepliesPer10Min: 4                # 10 分钟滑动窗口内 bot 最多主动回复次数（force 路径@/前缀触发不受限）
+    rateLimitCooldownMs: 300000          # 触发上限后强制 FADING 持续时长（5 分钟）
+    # ─── Deferred Timer（冷群空窗主动唤醒 Gate）─────────────────
+    deferredGateEnabled: true            # 总开关
+    minDeferredMs: 120000                # Deferred timer 最短延迟（2 分钟，避免过密唤醒）
+    maxDeferredMs: 900000                # Deferred timer 最长延迟（15 分钟兜底）
+    # ─── 本地预筛 ─────────────────
+    skipWhenAddressedOther: true         # 检测到 @ 别人（非 bot）时直接跳过 Gate，不消耗 LLM
+    skipWhenEmptyText: true              # 纯表情/图片/转账消息跳过 Gate
+    # ─── Gate prompt 信号阈值（保守倾向沉默）─────────────────
+    promptHintBusyGroupRate: 10          # 群最近 5min 消息数 ≥ 此值时，Gate prompt 提示"群里热闹倾向沉默"
+    promptHintRateLimitWarn: 3           # bot 最近 10min 已回复 ≥ 此值时，Gate prompt 强烈提示"避免刷屏"
   # 对方画像注入：每次回复前自动注入对方昵称/长期记忆/最近发言到 system prompt（增强"熟人感"）
   personProfileInjection:
     enabled: true

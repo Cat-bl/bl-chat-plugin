@@ -646,6 +646,66 @@ MCP 管理命令：
 | `enableTalkValueRules` | boolean | `false` | 启用时段化频率（夜间安静 / 白天活跃） |
 | `talkValueRules` | list | 见下 | 时段规则数组，每项 `{ range: "HH:MM-HH:MM", value: 0-1 }`，支持跨夜（如 `23:00-06:59`），命中第一条为准 |
 
+##### 拟人化对话焦点（FOCUS/FADING/COLD 三态机）
+
+bot 主动回复后进入 FOCUS 状态：期内所有新消息都强制走 Gate，让 LLM 自己决定要不要接续；超出 `focusMaxReplies` 上限或 Gate 连续判 `no_action` 自动降级 FADING；FADING 期阈值减半给"差一点接得上"的余热场景缓冲；最终回到 COLD 走常规阈值。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `focusDurationMs` | int | `180000` | bot 主动回复后 FOCUS 持续时间（毫秒），保守 3 分钟。期间每条新消息都强制走 Gate |
+| `fadingDurationMs` | int | `90000` | FOCUS 降级后 FADING 余热持续时间（毫秒），1.5 分钟。期间阈值减半 |
+| `focusMaxReplies` | int | `2` | 一轮 FOCUS 内 bot 最多主动回复次数，超过强制降级 FADING（防连刷）。force 路径不计入 |
+| `focusMaxNoAction` | int | `2` | FOCUS 期内 Gate 连续判 `no_action` 多少次后降级 FADING |
+| `fadingForceGate` | boolean | `false` | FADING 期是否也强制走 Gate（`false`=仅靠阈值减半保守，`true`=激进让 LLM 决定每条） |
+
+##### "等 bot 回应"本地识别（保证不漏接续话题）
+
+四条本地规则做轻量预筛，命中任一就强制走 Gate（仍由 LLM 做最终决策）：
+- **R1 秒回反应**：距 bot 上次发言 < `quickResponseMs`，任何消息都视为接续（人类秒回几乎必然在回应 bot）
+- **R2 关键词命中**：距 bot 上次发言 < `continuationLookbackMs`，消息含 bot 上次发言的关键词
+- **R3 问句信号**：含 `?/？` 或末尾 5 字含 `吗/呢/啊/么/嘛`
+- **R4 反馈词**：以 `嗯/对/真的/是吗/好的/我也/那你...` 等反馈词开头
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `quickResponseMs` | int | `30000` | R1 秒回窗口（毫秒） |
+| `continuationLookbackMs` | int | `180000` | R2/R3/R4 时间窗（毫秒） |
+| `continuationKeywordMatch` | boolean | `true` | 启用关键词匹配（R2） |
+| `continuationQuestionMatch` | boolean | `true` | 启用问句识别（R3） |
+| `continuationFeedbackMatch` | boolean | `true` | 启用反馈词识别（R4） |
+| `continuationKeywordMaxCount` | int | `5` | 每次提取保留的 bot 上次发言关键词数量上限 |
+
+##### Bot 速率硬上限（防刷屏最终防线）
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `maxRepliesPer10Min` | int | `4` | 10 分钟滑动窗口内 bot 最多主动回复次数。force 路径（@/前缀）**不受限**，确保被点名一定能回 |
+| `rateLimitCooldownMs` | int | `300000` | 触发上限后强制降级 FADING 的持续时长（毫秒），5 分钟 |
+
+##### Deferred Timer（冷群空窗主动唤醒 Gate）
+
+仅 phase=cold 时排：未达阈值时按 `(threshold - 当前等效消息数) × avgMs` 估算延迟，到点合成 `_smartWaitRerun` 事件再跑一轮 Gate，让 bot 在冷群里也能"想想要不要补一句"。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `deferredGateEnabled` | boolean | `true` | 总开关，关掉则冷群空窗不主动唤醒 |
+| `minDeferredMs` | int | `120000` | 最短延迟（毫秒），2 分钟。避免过密唤醒 |
+| `maxDeferredMs` | int | `900000` | 最长延迟（毫秒），15 分钟兜底 |
+
+##### 本地预筛（毫秒级跳过明显无关消息）
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `skipWhenAddressedOther` | boolean | `true` | 检测到 `@` 别人（非 bot）时直接跳过 Gate，不消耗 LLM 调用 |
+| `skipWhenEmptyText` | boolean | `true` | 纯表情/图片/转账等无文本消息跳过 Gate |
+
+##### Gate prompt 信号阈值
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `promptHintBusyGroupRate` | int | `10` | 群最近 5min 消息数 ≥ 此值时，Gate prompt 提示"群里热闹倾向沉默" |
+| `promptHintRateLimitWarn` | int | `3` | bot 最近 10min 已回复 ≥ 此值时，Gate prompt 强烈提示"避免刷屏" |
+
 `talkValueRules` 默认示例（仅 `enableTalkValueRules: true` 时生效）：
 ```yaml
 talkValueRules:
@@ -698,14 +758,30 @@ const result = await pluginBridge.instance?.enqueueProactiveTask(
   ├─ 禁言检测 → 被禁言 → return
   ├─ 表达学习收集 + 红包检测
   └─ handleRandomReplySmart
-        ├─ inFlight 锁（已有任务在跑则让步）
-        ├─ pendingCount++ / 检查 @/前缀/名字提及 → force
+        ├─ inFlight 锁（已有任务在跑则让步，记入 queuedWhileInFlight）
+        ├─ pendingCount++ / 更新 recentIncomingTimestamps（活跃度采样）
+        ├─ 本地预筛 prefilterMessage
+        │     ├─ addressed_other / empty_content / bot_self_echo → 回滚 pendingCount + return
+        │     └─ continuation_strong (R1-R4) → 设 forceGateCheck=true
+        ├─ checkTriggers (@/前缀/名字提及) → force
+        ├─ 焦点状态机 resolveConversationPhase
+        │     ├─ focus → forceGateCheck=true（每条都走 Gate）
+        │     └─ fading → 阈值减半（或 fadingForceGate=true 也强制走 Gate）
         ├─ Gate cooldown 检查（force 跳过）
-        ├─ 阈值: force 或 pendingCount ≥ ceil(1/talkValue) 或 空窗补偿命中
-        ├─ runTimingGate（15s 超时）→ continue / no_action / wait
-        └─ continue
-              ├─ force 路径 → 直接 handleTool（按正常引用概率）
-              └─ 非 force → debounce 800ms 看新消息 → handleTool（不引用）
+        ├─ 阈值: force 或 pendingCount ≥ threshold 或 idle 补偿命中
+        │     └─ 都不命中 + phase=cold → 排 deferred timer + return
+        ├─ runTimingGate（注入时间/活跃度/对话状态/特殊信号 → 15s 超时）
+        └─ 决策分支
+              ├─ continue
+              │     ├─ 速率上限检查（非 force）→ 超限则降级 fading + return
+              │     ├─ 设 phase=focus + focusReplyCount++（非 force）
+              │     ├─ focusReplyCount ≥ focusMaxReplies → 本次后降级 fading
+              │     ├─ force 路径 → 直接 handleTool（按正常引用概率）
+              │     └─ 非 force → debounce 看新消息 → handleTool（不引用）
+              ├─ wait → scheduleWaitReply（N 秒后再跑一轮 Gate）
+              └─ no_action
+                    ├─ 设 lastGateNoActionAt = now（触发 cooldown）
+                    └─ phase=focus 时累计 consecutiveNoAction → 达 focusMaxNoAction 降级 fading
 ```
 
 ---

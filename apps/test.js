@@ -75,6 +75,98 @@ function isPseudoToolMarker(marker = "") {
   return PSEUDO_TOOL_MARKER_SET.has(normalized) || PSEUDO_TOOL_MARKER_SET.has(`${normalized}tool`)
 }
 
+// ─── 拟人化对话相关：本地预筛辅助常量与函数 ────────────────────────────
+// 中文停用词（提取关键词时跳过这些）
+const CHAT_STOPWORDS = new Set([
+  "的", "了", "是", "也", "就", "都", "吧", "吗", "呢", "啊", "么", "哦", "呀", "嘛", "哈",
+  "这", "那", "我", "你", "他", "她", "它", "我们", "你们", "他们",
+  "觉得", "感觉", "可能", "应该", "不", "没", "有", "在", "和", "与", "或", "但", "而",
+  "什么", "怎么", "怎样", "如何", "哪里", "哪个", "为什么", "因为", "所以",
+  "一个", "一些", "这个", "那个", "这样", "那样", "这里", "那里",
+  "可以", "不能", "需要", "想要", "知道", "听说", "看到"
+])
+// 反馈词（用户消息开头或主体如果是这些，认为是在回应 bot）
+const FEEDBACK_WORDS = [
+  "嗯", "对", "不对", "真的", "真的吗", "是吗", "是的", "确实", "对哦", "也是",
+  "好的", "好吧", "可以", "可以的", "不可以", "不是", "没错", "没", "我也", "我觉得", "我感觉",
+  "那", "那你", "那我", "你说", "你这", "你这么说",
+  "啊？", "啊", "诶", "诶？", "哦", "哦？", "哈哈", "哈"
+]
+// 问句尾字（消息末尾包含这些算问句）
+const QUESTION_TAIL_CHARS = ["?", "？", "吗", "呢", "啊", "么", "嘛"]
+
+/**
+ * 从一段文本提取关键词（给 R2 关键词命中识别用）。
+ * 简单实现：按中英标点切分，取长度 ≥2 的非停用词词块，去重，最多 maxCount 个。
+ */
+function extractChatKeywords(text, maxCount = 5) {
+  if (!text || typeof text !== "string") return []
+  // 去除 CQ 码、@ 字段等噪声
+  const cleaned = text
+    .replace(/\[CQ:[^\]]+\]/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+  // 按非中英文数字字符切分
+  const tokens = cleaned.split(/[^一-龥A-Za-z0-9]+/).filter(Boolean)
+  const seen = new Set()
+  const result = []
+  for (const tok of tokens) {
+    const t = tok.trim()
+    if (t.length < 2) continue
+    if (CHAT_STOPWORDS.has(t)) continue
+    // 对中文长词额外拆分 2-3 字滑动窗口（避免长句一个 token 没法匹配）
+    if (/^[一-龥]+$/.test(t) && t.length >= 4) {
+      // 取 2-gram 前缀作为辅助关键词
+      for (let i = 0; i <= t.length - 2 && result.length < maxCount; i++) {
+        const gram = t.slice(i, i + 2)
+        if (CHAT_STOPWORDS.has(gram)) continue
+        if (seen.has(gram)) continue
+        seen.add(gram)
+        result.push(gram)
+      }
+    } else {
+      if (seen.has(t)) continue
+      seen.add(t)
+      result.push(t)
+    }
+    if (result.length >= maxCount) break
+  }
+  return result.slice(0, maxCount)
+}
+
+/**
+ * 判断消息是否是问句（含 ? / ？ 或末尾 5 字含问句尾字）
+ */
+function isQuestionMessage(text) {
+  if (!text || typeof text !== "string") return false
+  if (/[?？]/.test(text)) return true
+  const tail = text.slice(-5)
+  for (const ch of QUESTION_TAIL_CHARS) {
+    if (tail.includes(ch)) return true
+  }
+  return false
+}
+
+/**
+ * 判断消息是否以反馈词开头或主体由反馈词构成
+ */
+function isFeedbackMessage(text) {
+  if (!text || typeof text !== "string") return false
+  const t = text.trim()
+  if (!t) return false
+  // 整条就是反馈词
+  if (FEEDBACK_WORDS.includes(t)) return true
+  // 开头是反馈词（后接标点或空格）
+  for (const w of FEEDBACK_WORDS) {
+    if (t.startsWith(w)) {
+      const next = t.charAt(w.length)
+      if (!next || /[\s,，。.!！?？~～]/.test(next)) return true
+    }
+  }
+  return false
+}
+// ─── 拟人化对话辅助函数结束 ────────────────────────────────────────────
+
 function extractReadableTextFromObject(value) {
   if (!value || typeof value !== "object") return ""
   for (const key of PSEUDO_TOOL_TEXT_KEYS) {
@@ -503,6 +595,7 @@ export class ExamplePlugin extends plugin {
         for (const [gid, st] of trackingChatStates) {
           if ((st.lastMsgAt || 0) < cutoff) {
             if (st.waitTimers) for (const t of st.waitTimers.values()) clearTimeout(t)
+            if (st.deferredTimer) clearTimeout(st.deferredTimer)
             trackingChatStates.delete(gid)
             lastIncomingMsgAt.delete(gid)
             consecutiveInterrupts.delete(gid)
@@ -654,6 +747,189 @@ export class ExamplePlugin extends plugin {
     })
   }
 
+  /**
+   * 解析对话焦点状态（FOCUS / FADING / COLD），含自动衰减。每次入口都该调一次。
+   * 长时间无消息时一次性衰减到位（focus 经过 fading 直到 cold），避免误判为"刚进入 fading"。
+   */
+  resolveConversationPhase(state) {
+    const now = Date.now()
+    const smartCfg = this.config.smartTrigger || {}
+    const fadingDurationMs = Number(smartCfg.fadingDurationMs) || 90000
+
+    // 自动衰减：一次入口可能跨越多个 phase，循环到稳定状态
+    while (state.phaseUntil && now > state.phaseUntil) {
+      if (state.conversationPhase === 'focus') {
+        state.conversationPhase = 'fading'
+        // 从 focus 结束的那一刻起算 fading 持续时间
+        const fadingStart = state.phaseUntil
+        state.phaseUntil = fadingStart + fadingDurationMs
+        state.consecutiveNoAction = 0
+        if (now > state.phaseUntil) continue   // fading 也已过期，继续衰减到 cold
+        break
+      }
+      if (state.conversationPhase === 'fading') {
+        state.conversationPhase = 'cold'
+        state.phaseUntil = 0
+        state.focusReplyCount = 0
+        state.consecutiveNoAction = 0
+        break
+      }
+      // 已经是 cold，phaseUntil 不应该为 0 以外的值；保险起见清掉
+      state.phaseUntil = 0
+      break
+    }
+    return state.conversationPhase || 'cold'
+  }
+
+  /**
+   * 本地预筛：免 LLM 决定明显该回 / 不该回 / 高优先级走 Gate。
+   * 返回 { kind, reason }，kind 取值：
+   *   'force_continue' - @bot / 触发关键词命中（外层已有 inevitableAtReply 处理，这里主要识别"引用 bot 消息"）
+   *   'addressed_other' - 消息 @ 了非 bot
+   *   'empty_content' - 纯表情/图片/转账，无文本
+   *   'bot_self_echo' - bot 自己发的消息
+   *   'continuation_strong' - 命中 R1/R2/R3/R4 任一，应走 Gate
+   *   'regular' - 默认
+   */
+  prefilterMessage(e, state) {
+    const smartCfg = this.config.smartTrigger || {}
+    try {
+      // bot 自己发的消息（防自激励）
+      const botId = e?.bot?.uin || (typeof Bot !== 'undefined' && Bot.uin)
+      if (botId && String(e?.user_id) === String(botId)) {
+        return { kind: 'bot_self_echo', reason: 'sender_is_self' }
+      }
+      // @ 别人（且不是 @ bot）→ 跳过
+      if (smartCfg.skipWhenAddressedOther !== false && Array.isArray(e?.message)) {
+        const atSegs = e.message.filter(m => m?.type === 'at')
+        if (atSegs.length > 0) {
+          const atSelf = atSegs.some(m => String(m?.qq) === String(botId))
+          if (!atSelf) {
+            return { kind: 'addressed_other', reason: 'at_other_user' }
+          }
+        }
+      }
+      // 空文本（纯表情/图片/转账）→ 跳过
+      if (smartCfg.skipWhenEmptyText !== false) {
+        const rawText = (typeof e?.msg === 'string' ? e.msg : '').trim()
+        if (!rawText) {
+          return { kind: 'empty_content', reason: 'no_text' }
+        }
+      }
+
+      // 以下为 continuation_strong 识别（必须距 bot 上次发言不远）
+      const text = String(e?.msg || '')
+      const sinceLastBotReply = state.lastBotReplyAt ? Date.now() - state.lastBotReplyAt : Infinity
+      const quickResponseMs = Number(smartCfg.quickResponseMs) || 30000
+      const lookbackMs = Number(smartCfg.continuationLookbackMs) || 180000
+
+      // R1：秒回反应（30s 内任何消息都视为接续）
+      if (sinceLastBotReply <= quickResponseMs) {
+        return { kind: 'continuation_strong', reason: 'R1_quick_response' }
+      }
+      // R2/R3/R4 共同前提：在 lookback 窗口内
+      if (sinceLastBotReply <= lookbackMs) {
+        // R2 关键词匹配
+        if (smartCfg.continuationKeywordMatch !== false && Array.isArray(state.lastBotReplyKeywords)) {
+          for (const kw of state.lastBotReplyKeywords) {
+            if (kw && text.includes(kw)) {
+              return { kind: 'continuation_strong', reason: `R2_keyword:${kw}` }
+            }
+          }
+        }
+        // R3 问句
+        if (smartCfg.continuationQuestionMatch !== false && isQuestionMessage(text)) {
+          return { kind: 'continuation_strong', reason: 'R3_question' }
+        }
+        // R4 反馈词
+        if (smartCfg.continuationFeedbackMatch !== false && isFeedbackMessage(text)) {
+          return { kind: 'continuation_strong', reason: 'R4_feedback' }
+        }
+      }
+      return { kind: 'regular', reason: '' }
+    } catch (err) {
+      logger.warn(`[Prefilter] 异常，按 regular 处理：${err.message}`)
+      return { kind: 'regular', reason: 'exception' }
+    }
+  }
+
+  /**
+   * 计算群最近 5 分钟消息数（含 bot 自己的回复，用于 Gate prompt 活跃度信号）。
+   * 仅做粗略统计：state.recentIncomingTimestamps 滑动窗口。
+   */
+  computeGroupMsgRate5min(state) {
+    if (!Array.isArray(state?.recentIncomingTimestamps)) return 0
+    const cutoff = Date.now() - 300000
+    state.recentIncomingTimestamps = state.recentIncomingTimestamps.filter(t => t > cutoff)
+    return state.recentIncomingTimestamps.length
+  }
+
+  /**
+   * Bot 速率硬上限检查（防刷屏最终防线）。
+   * 返回 true=可以继续回复，false=已超上限不该回复（force 路径请勿调用本函数）
+   */
+  applyRateLimitGuard(state, groupId) {
+    const smartCfg = this.config.smartTrigger || {}
+    const cutoff = Date.now() - 600000
+    state.recentReplyTimestamps = (state.recentReplyTimestamps || []).filter(t => t > cutoff)
+    const maxPer10Min = Number(smartCfg.maxRepliesPer10Min) || 4
+    if (state.recentReplyTimestamps.length >= maxPer10Min) {
+      logger.info(`[RateLimit] group=${groupId} 10min 已回复 ${state.recentReplyTimestamps.length}/${maxPer10Min} 次，强制 no_action`)
+      state.conversationPhase = 'fading'
+      state.phaseUntil = Date.now() + (Number(smartCfg.rateLimitCooldownMs) || 300000)
+      return false
+    }
+    state.recentReplyTimestamps.push(Date.now())
+    return true
+  }
+
+  /**
+   * 冷群空窗 deferred timer：仅 phase=cold 时排，按 (threshold-currentEquiv)*avgMs 估算延迟，
+   * 到点合成 _smartWaitRerun 事件再跑一轮 Gate。
+   * 注意：本函数通常在 inFlight=true 时（主流程 try 块内）被调用，因此**不要**用 inFlight 守卫；
+   * 真正的并发保护放在 setTimeout 回调里（callback 触发时再检查 inFlight）。
+   */
+  scheduleDeferredGateCheck(e, state) {
+    const smartCfg = this.config.smartTrigger || {}
+    if (smartCfg.deferredGateEnabled === false) return
+    if (!e?.group_id) return
+    if (state.conversationPhase !== 'cold') return
+
+    if (state.deferredTimer) clearTimeout(state.deferredTimer)
+
+    const talkValue = this.resolveTalkValue(e.group_id)
+    const threshold = Math.max(1, Math.ceil(1 / Math.max(0.01, talkValue)))
+    const avgMs = this.computeAvgReplyLatency(state) || Number(smartCfg.avgLatencyDefaultMs) || 60000
+    const idleMs = Math.max(0, Date.now() - (state.lastMsgAt || Date.now()))
+    const currentEquiv = (state.pendingCount || 0) + idleMs / avgMs
+    const remaining = Math.max(0, threshold - currentEquiv)
+
+    const minMs = Number(smartCfg.minDeferredMs) || 120000
+    const maxMs = Number(smartCfg.maxDeferredMs) || 900000
+    const delayMs = Math.max(minMs, Math.min(maxMs, Math.ceil(remaining * avgMs)))
+
+    const groupId = e.group_id
+    state.deferredTimer = setTimeout(async () => {
+      state.deferredTimer = null
+      try {
+        const mode = String(this.config?.chatTriggerMode || 'strict').toLowerCase()
+        if (mode !== 'smart') return
+        if (!this.checkGroupPermission(e)) return
+        if (await this.isMutedInGroup(e)) return
+        if (state.inFlight) return
+        state.forceGateCheck = true
+        const wrapped = Object.create(e)
+        wrapped._smartWaitRerun = true
+        wrapped._deferredReason = 'cold_idle'
+        logger.info(`[DeferredGate] group=${groupId} fired delay=${delayMs}ms`)
+        await this.handleRandomReplySmart(wrapped)
+      } catch (err) {
+        logger.error('[DeferredGate] 失败:', err)
+      }
+    }, delayMs)
+    state.deferredTimer.unref?.()
+  }
+
   // ==================== smart 模式：Timing Gate 触发 ====================
 
   /**
@@ -715,6 +991,7 @@ export class ExamplePlugin extends plugin {
         if (oldestId != null) {
           const old = trackingChatStates.get(oldestId)
           if (old?.waitTimers) for (const t of old.waitTimers.values()) clearTimeout(t)
+          if (old?.deferredTimer) clearTimeout(old.deferredTimer)
           trackingChatStates.delete(oldestId)
         }
       }
@@ -730,7 +1007,17 @@ export class ExamplePlugin extends plugin {
         rerunEvent: null,
         queuedWhileInFlight: 0,
         queuedForceGateCheck: false,
-        waitTimers: new Map()
+        waitTimers: new Map(),
+        // 拟人化重构新增字段
+        conversationPhase: 'cold',        // 'cold' | 'focus' | 'fading'
+        phaseUntil: 0,                    // 当前 phase 自动衰减时间戳
+        focusReplyCount: 0,               // 本轮 FOCUS 期 bot 主动回复次数
+        consecutiveNoAction: 0,           // FOCUS 期 Gate 连续 no_action 次数
+        lastBotReplyAt: 0,                // bot 在该群最近一次发言时间
+        lastBotReplyKeywords: [],         // bot 上次发言提取的关键词（给 continuation R2 用）
+        recentReplyTimestamps: [],        // bot 在该群的最近回复时间戳列表（速率限制用）
+        recentIncomingTimestamps: [],     // 该群最近群消息时间戳（活跃度统计用）
+        deferredTimer: null               // 冷群唤醒定时器
       }
       trackingChatStates.set(groupId, state)
     }
@@ -745,7 +1032,12 @@ export class ExamplePlugin extends plugin {
     const state = this.getSmartState(groupId)
     // 记录该群最新消息时间戳给 applyReplyDebounce 用（仅 smart 模式需要，避免 strict 模式持续累积内存）
     const isSyntheticSmartEvent = e?._smartWaitRerun || e?._smartQueuedRerun || e?._proactiveReply
-    if (!isSyntheticSmartEvent) lastIncomingMsgAt.set(groupId, Date.now())
+    if (!isSyntheticSmartEvent) {
+      lastIncomingMsgAt.set(groupId, Date.now())
+      // 活跃度采样移到入口锁外，避免抢锁失败时漏统计（影响 Gate 看到的 5min 消息数）
+      state.recentIncomingTimestamps = (state.recentIncomingTimestamps || []).filter(t => t > Date.now() - 300000)
+      state.recentIncomingTimestamps.push(Date.now())
+    }
     // 入口锁：该群已经有一个 handleRandomReplySmart 正在跑（Gate / debounce / handleTool 任一阶段）→ 让步本条
     // 必须在任何 await 之前同步检查并 set，防止 await checkTriggers 期间多个调用并发通过
     if (state.inFlight) {
@@ -773,7 +1065,8 @@ export class ExamplePlugin extends plugin {
       const prevLastMsgAt = state.lastMsgAt || Date.now()
       const queuedCount = Math.max(0, Number(state.queuedWhileInFlight) || 0)
       state.queuedWhileInFlight = 0
-      state.pendingCount += e?._smartQueuedRerun ? Math.max(1, queuedCount) : 1 + queuedCount
+      const pendingDelta = e?._smartQueuedRerun ? Math.max(1, queuedCount) : 1 + queuedCount
+      state.pendingCount += pendingDelta
       state.lastMsgAt = Date.now()
 
       const smartCfg = this.config.smartTrigger || {}
@@ -790,6 +1083,24 @@ export class ExamplePlugin extends plugin {
         state.forceContinue = true
       }
 
+      // ─── 本地预筛（仅对真实新消息生效）─────────────────────────
+      let prefilter = { kind: 'regular', reason: '' }
+      if (!isSyntheticSmartEvent) {
+        prefilter = this.prefilterMessage(e, state)
+        if (prefilter.kind === 'addressed_other' || prefilter.kind === 'empty_content' || prefilter.kind === 'bot_self_echo') {
+          // 回滚刚才计入的 pendingCount（这些消息不应推动触发阈值）
+          state.pendingCount = Math.max(0, state.pendingCount - pendingDelta)
+          logger.info(`[Prefilter] group=${groupId} skip kind=${prefilter.kind} reason=${prefilter.reason}`)
+          // 顺手排个 cold 兜底（如果当前是 cold 状态）
+          this.scheduleDeferredGateCheck(e, state)
+          return false
+        }
+        if (prefilter.kind === 'continuation_strong') {
+          state.forceGateCheck = true
+          logger.info(`[Prefilter] group=${groupId} continuation_strong reason=${prefilter.reason}`)
+        }
+      }
+
       // 强制覆盖：@/触发前缀
       const hasTrigger = await this.checkTriggers(e)
       if (allowDirectTrigger && hasTrigger && smartCfg.inevitableAtReply !== false) {
@@ -803,6 +1114,15 @@ export class ExamplePlugin extends plugin {
         }
       }
 
+      // ─── 对话焦点状态机：决定本条是否强制走 Gate / 阈值是否减半 ──
+      const phase = this.resolveConversationPhase(state)
+      if (phase === 'focus') {
+        state.forceGateCheck = true
+      } else if (phase === 'fading' && smartCfg.fadingForceGate === true) {
+        // 用户选择激进策略：FADING 期也强制走 Gate
+        state.forceGateCheck = true
+      }
+
       // 冷却检查：no_action 后短时间内不再请求 Gate（强制覆盖可绕过）
       const rawCooldownValue = smartCfg.timingGateCooldownSeconds
       const rawCooldownSeconds = rawCooldownValue === undefined || rawCooldownValue === null || rawCooldownValue === ''
@@ -814,12 +1134,17 @@ export class ExamplePlugin extends plugin {
         return false
       }
 
-      // 阈值判定
+      // 阈值判定（fading 期半阈值，仅作用于"非 force"路径）
       const talkValue = this.resolveTalkValue(groupId)
-      const threshold = Math.max(1, Math.ceil(1 / Math.max(0.01, talkValue)))
+      const rawThreshold = Math.max(1, Math.ceil(1 / Math.max(0.01, talkValue)))
+      const threshold = phase === 'fading'
+        ? Math.max(1, Math.floor(rawThreshold / 2))
+        : rawThreshold
       const reachThreshold = state.pendingCount >= threshold
       const idleHit = this.idleCompensationMet(state, threshold, prevLastMsgAt)
       if (!state.forceContinue && !state.forceGateCheck && !reachThreshold && !idleHit) {
+        // 冷群兜底：phase=cold 且未达阈值时排 deferred timer，让 bot 在合适时机自己跑一轮 Gate
+        this.scheduleDeferredGateCheck(e, state)
         return false
       }
 
@@ -827,9 +1152,9 @@ export class ExamplePlugin extends plugin {
       try {
         // 强制继续路径直接放行，跳过 Gate；强制 Gate 路径仍交给 Gate 判断是否补一句
         if (state.forceContinue) {
-          gateResult = { decision: 'continue', reason: 'force' }
+          gateResult = { decision: 'continue', reason: 'force', __forceContinue: true }
         } else {
-          gateResult = await this.runTimingGate(e, state)
+          gateResult = await this.runTimingGate(e, state, { phase, prefilter, threshold })
         }
       } catch (err) {
         logger.error(`[TimingGate] 调用失败:`, err)
@@ -837,18 +1162,55 @@ export class ExamplePlugin extends plugin {
       }
 
       const decision = gateResult?.decision || 'no_action'
-      logger.info(`[TimingGate] group=${groupId} decision=${decision} pending=${state.pendingCount}/${threshold} forceContinue=${state.forceContinue} forceGate=${state.forceGateCheck} reason=${gateResult?.reason || ''}`)
+      logger.info(`[TimingGate] group=${groupId} decision=${decision} phase=${phase} pending=${state.pendingCount}/${threshold} forceContinue=${state.forceContinue} forceGate=${state.forceGateCheck} reason=${gateResult?.reason || ''}`)
 
       if (decision === 'continue') {
-        const wasForced = gateResult?.reason === 'force'
+        const wasForced = gateResult?.__forceContinue === true
+        // 速率硬上限（force 路径不受限但仍记录时间戳，保证 rate limit 统计准确）
+        if (!wasForced) {
+          if (!this.applyRateLimitGuard(state, groupId)) {
+            state.pendingCount = 0
+            state.forceContinue = false
+            state.forceGateCheck = false
+            return false
+          }
+        } else {
+          // force 路径直接 push 时间戳，跳过上限检查
+          state.recentReplyTimestamps = (state.recentReplyTimestamps || []).filter(t => t > Date.now() - 600000)
+          state.recentReplyTimestamps.push(Date.now())
+        }
         state.pendingCount = 0
         state.forceContinue = false
         state.forceGateCheck = false
         state.lastGateNoActionAt = 0
+        state.consecutiveNoAction = 0
+        // 进入 / 续命 FOCUS（非 force 路径计入 focusReplyCount）
+        const focusDurationMs = Number(smartCfg.focusDurationMs) || 180000
+        const prevPhase = state.conversationPhase
+        state.conversationPhase = 'focus'
+        state.phaseUntil = Date.now() + focusDurationMs
+        // force 路径升回 focus 时视为"新一轮"，重置 focusReplyCount（避免立即又被上限拦截）
+        if (wasForced && prevPhase !== 'focus') {
+          state.focusReplyCount = 0
+        }
+        if (!wasForced) {
+          state.focusReplyCount = (state.focusReplyCount || 0) + 1
+          const maxFocusReplies = Number(smartCfg.focusMaxReplies) || 2
+          if (state.focusReplyCount >= maxFocusReplies) {
+            // 达上限：本次允许回，但之后立刻降级 FADING 防连刷
+            state.conversationPhase = 'fading'
+            state.phaseUntil = Date.now() + (Number(smartCfg.fadingDurationMs) || 90000)
+            logger.info(`[Phase] group=${groupId} focusMaxReplies(${maxFocusReplies}) 达上限，本次回复后降级 fading`)
+          }
+        }
         // 标记本条为"主动搭话"（非 @/前缀触发），让 sendSegmentedMessage 决定要不要去掉引用
         if (!wasForced) e._proactiveReply = true
         // force 路径（@/名字提及/proactive 等"必回"场景）跳过 debounce 立即回复；其余先 debounce 看有没有新消息
         if (!wasForced && !(await this.applyReplyDebounce(e))) {
+          // 让步后回滚 focusReplyCount（这次实际没回复）
+          if (!wasForced) state.focusReplyCount = Math.max(0, (state.focusReplyCount || 0) - 1)
+          // 同时回滚 rate limit 计数
+          state.recentReplyTimestamps = (state.recentReplyTimestamps || []).slice(0, -1)
           return false
         }
         return await this.handleTool(e)
@@ -858,6 +1220,7 @@ export class ExamplePlugin extends plugin {
         state.pendingCount = 0
         state.forceContinue = false
         state.forceGateCheck = false
+        state.consecutiveNoAction = 0   // wait 不是冷漠，清零计数避免跨 wait 累积误降级
         this.scheduleWaitReply(e, sec, 'gate_wait')
         return false
       }
@@ -866,6 +1229,17 @@ export class ExamplePlugin extends plugin {
       state.pendingCount = 0
       state.forceContinue = false
       state.forceGateCheck = false
+      // FOCUS 内累计 no_action，超过 focusMaxNoAction 就降级 FADING
+      if (state.conversationPhase === 'focus') {
+        state.consecutiveNoAction = (state.consecutiveNoAction || 0) + 1
+        const maxNoAction = Number(smartCfg.focusMaxNoAction) || 2
+        if (state.consecutiveNoAction >= maxNoAction) {
+          state.conversationPhase = 'fading'
+          state.phaseUntil = Date.now() + (Number(smartCfg.fadingDurationMs) || 90000)
+          state.consecutiveNoAction = 0
+          logger.info(`[Phase] group=${groupId} Gate 连续 ${maxNoAction} 次 no_action，降级 fading`)
+        }
+      }
       return false
     } finally {
       state.inFlight = false
@@ -885,8 +1259,9 @@ export class ExamplePlugin extends plugin {
 
   /**
    * 调用 Timing Gate 子代理，返回 { decision: 'continue'|'no_action'|'wait', wait_seconds?, reason? }
+   * @param ctx 额外上下文：{ phase, prefilter, threshold }
    */
-  async runTimingGate(e, state) {
+  async runTimingGate(e, state, ctx = {}) {
     const smartCfg = this.config.smartTrigger || {}
     const ctxSize = Math.max(5, Math.min(100, Number(smartCfg.gateContextSize) || 20))
     const botName = Bot.nickname || '机器人'
@@ -907,6 +1282,45 @@ export class ExamplePlugin extends plugin {
       return { decision: 'no_action', reason: 'no_api_config' }
     }
 
+    // ─── 多维信号采集 ─────────────────────────────────────
+    const phase = ctx.phase || state.conversationPhase || 'cold'
+    const prefilterKind = ctx.prefilter?.kind || 'regular'
+    const prefilterReason = ctx.prefilter?.reason || ''
+    const recentReplyCount = (state.recentReplyTimestamps || []).filter(t => t > Date.now() - 600000).length
+    const groupMsgRate5min = this.computeGroupMsgRate5min(state)
+    const sinceLastBotReplySec = state.lastBotReplyAt
+      ? Math.max(0, Math.floor((Date.now() - state.lastBotReplyAt) / 1000))
+      : -1
+    const sinceLastMsgSec = state.lastMsgAt
+      ? Math.max(0, Math.floor((Date.now() - state.lastMsgAt) / 1000))
+      : 0
+    const now = new Date()
+    const hh = now.getHours()
+    const hhmm = `${String(hh).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const isLateNight = hh >= 23 || hh < 6
+    // 是否 @ 别人 / 引用 bot
+    let addressedToOther = false
+    let currentMsgQuotesBot = false
+    try {
+      const botId = e?.bot?.uin || Bot.uin
+      if (Array.isArray(e?.message)) {
+        for (const seg of e.message) {
+          if (seg?.type === 'at' && String(seg.qq) !== String(botId)) addressedToOther = true
+          if (seg?.type === 'reply') {
+            // 部分协议端会附带被回复消息的 sender 信息
+            const repliedUid = seg?.sender_id || seg?.qq || seg?.user_id
+            if (repliedUid && String(repliedUid) === String(botId)) currentMsgQuotesBot = true
+          }
+        }
+      }
+    } catch {}
+    const triggerReason = e?._deferredReason
+      ? 'deferred'
+      : (prefilterKind === 'continuation_strong' ? `continuation_strong(${prefilterReason})` : 'regular')
+
+    const promptHintBusyGroupRate = Number(smartCfg.promptHintBusyGroupRate) || 10
+    const promptHintRateLimitWarn = Number(smartCfg.promptHintRateLimitWarn) || 3
+
     const systemPrompt = `你是 QQ 群聊节奏判断助手。机器人名字叫"${botName}"。
 当前北京时间：${new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}
 你需要判断 ${botName} 是否应该现在插话、保持沉默、或稍后再说。
@@ -922,8 +1336,22 @@ ${botName} 是群里一员，可以像群友一样自然参与对话；但不要
 时段倾向：深夜（23:00-06:00）更克制，倾向 wait 或 no_action；白天可以更活跃。
 冲突时偏向"少说"，但不要僵化到"非被叫就不开口"。
 
+【新增判断指引（保守优先）】
+- 看到"⚠ @ 了别人"信号：除非该消息内容显然是普遍话题（如"大家觉得..."），否则倾向 no_action
+- 看到"焦点=focus"且"距 ${botName} 上次发言 < 60s"：用户大概率在接续，倾向 continue
+- 看到"最近 10 分钟已回复 ≥${promptHintRateLimitWarn} 次"：除非被点名，强烈倾向 no_action（避免刷屏）
+- 看到"群最近 5 分钟消息数 ≥ ${promptHintBusyGroupRate}"且当前消息没有点名 ${botName}：群里热闹，倾向沉默观察
+- 看到"触发原因=deferred"：这是定时自检，群里没新消息或 ${botName} 刚开了话头还没人接；只在非常合适时主动补一句，否则 no_action
+- 看到"触发原因=continuation_strong"且消息明显在向 ${botName} 提问/反馈：倾向 continue
+- 不确定时一律倾向 no_action。宁可让用户再说一句也不要错插话。
+
 只返回严格的 JSON，格式：{"decision":"continue|no_action|wait","wait_seconds":3,"reason":"简短理由"}
 wait 时 wait_seconds 取 3-15 之间。不要任何其他文字、不要 markdown、不要代码块包装。`
+
+    const specialSignals = []
+    if (addressedToOther) specialSignals.push('⚠ 当前消息 @ 了别人，谨慎插话')
+    if (currentMsgQuotesBot) specialSignals.push(`✓ 当前消息引用了 ${botName} 的某条消息`)
+    const specialSignalsBlock = specialSignals.length ? `\n【特殊信号】\n${specialSignals.join('\n')}\n` : ''
 
     const userPrompt = `【近期群聊记录】
 ${history}
@@ -931,6 +1359,17 @@ ${history}
 【当前消息】
 ${e.sender?.card || e.sender?.nickname || '用户'}: ${e.msg || ''}
 
+【时间与活跃度】
+- 距上一条群消息：${sinceLastMsgSec}s
+- 距 ${botName} 上一次发言：${sinceLastBotReplySec >= 0 ? sinceLastBotReplySec + 's' : '长时间未发言'}
+- ${botName} 最近 10 分钟在本群已回复：${recentReplyCount} 次
+- 群最近 5 分钟消息数：${groupMsgRate5min}
+- 当前时段：${hhmm}（${isLateNight ? '深夜' : '日间'}）
+
+【对话状态】
+- 当前焦点：${phase}（focus=刚参与话题中；fading=余热；cold=未参与）
+- 触发原因：${triggerReason}
+${specialSignalsBlock}
 请输出 JSON 决策。`
 
     const controller = new AbortController()
@@ -2967,6 +3406,19 @@ ${mcpPrompts}
     try {
       output = sanitizeFinalReplyText(output)
       if (!output) return null
+      // smart 模式：发完话后记录 bot 上次发言时间和关键词，给 prefilter R1/R2 识别接续用
+      const groupId = e?.group_id
+      const triggerMode = String(this.config?.chatTriggerMode || 'strict').toLowerCase()
+      if (groupId && triggerMode === 'smart') {
+        try {
+          const st = this.getSmartState(groupId)
+          st.lastBotReplyAt = Date.now()
+          const maxKw = Number(this.config?.smartTrigger?.continuationKeywordMaxCount) || 5
+          st.lastBotReplyKeywords = extractChatKeywords(output, maxKw)
+        } catch (err) {
+          logger.warn(`[SmartState] 记录 bot 发言失败：${err.message}`)
+        }
+      }
       // 主动搭话路径（smart 模式 Gate 非 force 触发）强制不引用：bot 像群友自然插话而非"回复某人"
       if (e?._proactiveReply && this.config?.smartTrigger?.proactiveReplyNoQuote !== false) {
         quoteChance = 0
