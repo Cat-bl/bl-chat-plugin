@@ -117,14 +117,14 @@ pnpm install
 ```yaml
 - likeTool          # 点赞工具
 - pokeTool          # 戳一戳工具
-- googleImageAnalysisTool  # Google 图片分析
-- aiMindMapTool     # AI 思维导图
-- bananaTool(dedupe) # 大香蕉文生图
+- googleImageAnalysisTool  # 图片分析、识图
+- aiMindMapTool     # 思维导图生成
+- bananaTool(dedupe) # 文生图
 - bingImageSearchTool # Bing 图片搜索
 - changeCardTool    # QQ群聊名片修改
 - chatHistoryTool   # 获取聊天历史记录
 - githubRepoTool    # GitHub 仓库工具
-- googleImageEditTool(dedupe) # 大香蕉图片编辑
+- googleImageEditTool(dedupe) # 图生图
 - jinyanTool        # 禁言工具
 - qqZoneTool        # QQ 空间工具
 - searchInformationTool    # 搜索联网
@@ -306,6 +306,12 @@ MCP 管理命令：
 - 远程 MCP 建议配置鉴权 header。
 - MCP 工具描述只能作为参考，不要把不可信 MCP 当成安全来源。
 - 插件不会主动把完整聊天记录发给 MCP，只有模型决定调用某个 MCP 工具时，才会把那次工具参数传给对应服务。
+
+## 高德地图MCP配置示例
+![效果图3](./assets/images/3.png)
+![效果图6](./assets/images/6.png)
+![效果图4](./assets/images/4.png)
+![效果图5](./assets/images/5.png)
 
 
 # message.yaml配置说明
