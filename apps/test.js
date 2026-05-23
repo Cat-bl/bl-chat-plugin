@@ -872,7 +872,7 @@ export class ExamplePlugin extends plugin {
     const smartCfg = this.config.smartTrigger || {}
     const cutoff = Date.now() - 600000
     state.recentReplyTimestamps = (state.recentReplyTimestamps || []).filter(t => t > cutoff)
-    const maxPer10Min = Number(smartCfg.maxRepliesPer10Min) || 4
+    const maxPer10Min = Number(smartCfg.maxRepliesPer10Min) || 8
     if (state.recentReplyTimestamps.length >= maxPer10Min) {
       logger.info(`[RateLimit] group=${groupId} 10min 已回复 ${state.recentReplyTimestamps.length}/${maxPer10Min} 次，强制 no_action`)
       state.conversationPhase = 'fading'
@@ -941,7 +941,7 @@ export class ExamplePlugin extends plugin {
     // 复用速率检查（避免和正常回复一起把 bot 刷成复读机）
     const cutoff = Date.now() - 600000
     state.recentReplyTimestamps = (state.recentReplyTimestamps || []).filter(t => t > cutoff)
-    const maxPer10Min = Number(smartCfg.maxRepliesPer10Min) || 4
+    const maxPer10Min = Number(smartCfg.maxRepliesPer10Min) || 8
     if (state.recentReplyTimestamps.length >= maxPer10Min) {
       logger.info(`[Repeat] group=${groupId} rate limit 已满 (${state.recentReplyTimestamps.length}/${maxPer10Min}) 放弃复读`)
       return false
@@ -975,9 +975,6 @@ export class ExamplePlugin extends plugin {
   detectGroupRepeat(e, state) {
     const smartCfg = this.config.smartTrigger || {}
     if (smartCfg.repeatJoinEnabled === false) return null
-    // 冷却：避免同一波内反复跟（即使 rate limit 还有配额）
-    const cooldownMs = Number(smartCfg.repeatJoinCooldownMs) || 180000
-    if (Date.now() - (state.lastRepeatJoinAt || 0) < cooldownMs) return null
 
     const text = String(e?.msg || '').trim()
     if (!text) return null
@@ -1003,11 +1000,28 @@ export class ExamplePlugin extends plugin {
     const minCount = Math.max(2, Number(smartCfg.repeatMinCount) || 3)
     if (distinctUsers.size < minCount) return null
 
+    // 已确认是复读潮（≥minCount 个不同用户在重复），下面任何失败都打日志方便排查
+    const groupId = e?.group_id
+    const textPreview = text.length > 20 ? text.slice(0, 20) + '...' : text
+
+    // 冷却：避免同一波内反复跟
+    const cooldownMs = Number(smartCfg.repeatJoinCooldownMs) || 180000
+    const sinceLast = Date.now() - (state.lastRepeatJoinAt || 0)
+    if (sinceLast < cooldownMs) {
+      const remainSec = Math.ceil((cooldownMs - sinceLast) / 1000)
+      logger.info(`[Repeat] group=${groupId} 检测到复读 text="${textPreview}" users=${distinctUsers.size} 但冷却中(剩余${remainSec}s)`)
+      return null
+    }
+
     // 通过概率筛选
     const prob = Number(smartCfg.repeatJoinProbability)
     const finalProb = Number.isFinite(prob) ? Math.max(0, Math.min(1, prob)) : 0.6
-    if (Math.random() > finalProb) return null
+    if (Math.random() > finalProb) {
+      logger.info(`[Repeat] group=${groupId} 检测到复读 text="${textPreview}" users=${distinctUsers.size} 但概率未命中(prob=${finalProb})`)
+      return null
+    }
 
+    logger.info(`[Repeat] group=${groupId} 检测到复读 text="${textPreview}" users=${distinctUsers.size} 准备参与`)
     return text
   }
 
@@ -1297,7 +1311,7 @@ export class ExamplePlugin extends plugin {
         }
         if (!wasForced) {
           state.focusReplyCount = (state.focusReplyCount || 0) + 1
-          const maxFocusReplies = Number(smartCfg.focusMaxReplies) || 2
+          const maxFocusReplies = Number(smartCfg.focusMaxReplies) || 4
           if (state.focusReplyCount >= maxFocusReplies) {
             // 达上限：本次允许回，但之后立刻降级 FADING 防连刷
             state.conversationPhase = 'fading'
@@ -1420,8 +1434,8 @@ export class ExamplePlugin extends plugin {
       ? 'deferred'
       : (prefilterKind === 'continuation_strong' ? `continuation_strong(${prefilterReason})` : 'regular')
 
-    const promptHintBusyGroupRate = Number(smartCfg.promptHintBusyGroupRate) || 10
-    const promptHintRateLimitWarn = Number(smartCfg.promptHintRateLimitWarn) || 3
+    const promptHintBusyGroupRate = Number(smartCfg.promptHintBusyGroupRate) || 30
+    const promptHintRateLimitWarn = Number(smartCfg.promptHintRateLimitWarn) || 5
 
     const systemPrompt = `你是 QQ 群聊节奏判断助手。机器人名字叫"${botName}"。
 当前北京时间：${new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}

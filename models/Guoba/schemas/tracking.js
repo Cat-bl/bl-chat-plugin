@@ -76,8 +76,8 @@ export default [
     field: "smartTrigger.timingGateCooldownSeconds",
     label: "Gate 冷却（秒）",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: Gate 判 no_action 后多久内不再请求 Gate，防 LLM 被刷爆",
-    componentProps: { min: 1, max: 60, placeholder: "15" }
+    bottomHelpMessage: "smart 模式: Gate 判 no_action 后多久内不再请求 Gate（默认 5 秒，活跃群更频繁评估）",
+    componentProps: { min: 1, max: 60, placeholder: "5" }
   },
   {
     field: "smartTrigger.gateContextSize",
@@ -188,8 +188,8 @@ export default [
     field: "smartTrigger.focusMaxReplies",
     label: "FOCUS 内最大回复次数",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: 一轮 FOCUS 内 bot 最多主动回复次数，超过强制降级 FADING 防连刷（保守默认 2）。force 路径不计入",
-    componentProps: { min: 1, max: 10, placeholder: "2" }
+    bottomHelpMessage: "smart 模式: 一轮 FOCUS 内 bot 最多主动回复次数，超过强制降级 FADING 防连刷（默认 4）。force 路径不计入",
+    componentProps: { min: 1, max: 10, placeholder: "4" }
   },
   {
     field: "smartTrigger.focusMaxNoAction",
@@ -253,8 +253,8 @@ export default [
     field: "smartTrigger.maxRepliesPer10Min",
     label: "10 分钟内最多回复次数",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: 10 分钟滑动窗口内 bot 最多主动回复次数（保守默认 4）。force 路径（@/前缀）不受限，确保被点名一定能回",
-    componentProps: { min: 1, max: 30, placeholder: "4" }
+    bottomHelpMessage: "smart 模式: 10 分钟滑动窗口内 bot 最多主动回复次数（默认 8）。force 路径（@/前缀）不受限，确保被点名一定能回",
+    componentProps: { min: 1, max: 30, placeholder: "8" }
   },
   {
     field: "smartTrigger.rateLimitCooldownMs",
@@ -308,15 +308,15 @@ export default [
     field: "smartTrigger.promptHintBusyGroupRate",
     label: "群热闹消息数阈值",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: 群最近 5min 消息数 ≥ 此值时，Gate prompt 提示「群里热闹倾向沉默」（默认 10）",
-    componentProps: { min: 1, max: 100, placeholder: "10" }
+    bottomHelpMessage: "smart 模式: 群最近 5min 消息数 ≥ 此值时，Gate prompt 提示「群里热闹倾向沉默」（默认 30，正常活跃群聊不会触发；调低则 bot 在热闹群更克制）",
+    componentProps: { min: 1, max: 100, placeholder: "30" }
   },
   {
     field: "smartTrigger.promptHintRateLimitWarn",
     label: "刷屏警告阈值 (次/10min)",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: bot 最近 10min 已回复 ≥ 此值时，Gate prompt 强烈提示「避免刷屏」（默认 3）",
-    componentProps: { min: 1, max: 30, placeholder: "3" }
+    bottomHelpMessage: "smart 模式: bot 最近 10min 已回复 ≥ 此值时，Gate prompt 强烈提示「避免刷屏」（默认 5）",
+    componentProps: { min: 1, max: 30, placeholder: "5" }
   },
 
   // ===== 智能模式 - 复读跟读 =====
