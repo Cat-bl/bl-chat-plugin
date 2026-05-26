@@ -11,13 +11,15 @@ export class VideoAnalysisTool extends AbstractTool {
     super()
     this.name = "videoAnalysisTool"
     this.description =
-      "进行视频分析, 当用户需要分析、处理、识别视频内容，比如说让你分析一下这个视频，或者看一下这视频，让你评价一下这个视频等时使用此工具，你不用考虑上下文中是否有视频链接，可以直接调用比工具，调用之后高数回自动获得视频链接，可提取视频中的文字信息并进行理解分析。"
+      "视频分析工具。当用户需要分析、解读、评价、识别视频内容时调用，例如：『分析一下这个视频』『这视频讲什么』『评价一下』。" +
+      "支持两种来源：(1)当前消息中直接附带的视频；(2)引用消息（回复某条视频）中的视频。" +
+      "你不需要在参数里传视频链接，工具会自动从当前消息或引用消息中提取，提取不到会返回错误。"
     this.parameters = {
       type: "object",
       properties: {
         prompt: {
           type: "string",
-          description: "用户的视频处理需求描述，如果为空则进行默认的视频分析",
+          description: "用户的视频分析诉求描述。例如：『总结视频内容』『提取视频里的文字』『判断视频是否搞笑』。如果为空则做默认的视频内容分析。",
         },
       },
       additionalProperties: false,
@@ -80,57 +82,50 @@ export class VideoAnalysisTool extends AbstractTool {
   }
 
   /**
-   * 获取图片列表（包括消息和引用消息中的图片）
+   * 从消息或引用消息中提取视频 URL
+   * 兼容多种字段（NapCat/ICQQ 的字段名不一致）：url / file_url / data.url / data.file_url / file / data.file
    * @param {object} e - 消息对象
-   * @returns {Promise<Buffer[]>} - 返回图片 Buffer 数组
+   * @returns {Promise<string[]>} - 视频 URL 数组
    */
   async getVideo(e) {
-    const imagesInMessage = e.message.filter(m => m.type === "video").map(video => video.url)
+    const pickVideoUrl = v => v?.url || v?.file_url || v?.data?.url || v?.data?.file_url || v?.file || v?.data?.file
 
-    const tasks = []
+    // 1. 当前消息里的视频
+    const videosInMessage = (e.message || [])
+      .filter(m => m?.type === "video")
+      .map(pickVideoUrl)
+      .filter(Boolean)
 
-    /**
-     * 获取引用消息中的图片
-     */
-    let quotedImages = []
+    // 2. 引用消息里的视频（兼容 e.reply_id / e.source / e.reply 三种来源）
+    let quotedVideos = []
     let source = null
-    if (e.reply_id) {
-      source = await e.getReply()
-    } else if (e.source) {
-      if (e.isGroup) {
+    try {
+      if (typeof e.getReply === "function") {
+        source = await e.getReply()
+      } else if (e.source && e.isGroup) {
         source = await Bot[e.self_id]
-          .pickGroup(e.group_id)
-          .getChatHistory(e.source.seq || e.reply_id, 1)
-      } else if (e.isPrivate) {
+          ?.pickGroup(e.group_id)
+          ?.getChatHistory(e.source.seq || e.reply_id, 1)
+      } else if (e.source && e.isPrivate) {
         source = await Bot[e.self_id]
-          .pickFriend(e.user_id)
-          .getChatHistory(e.source.time || e.reply_id, 1)
+          ?.pickFriend(e.user_id)
+          ?.getChatHistory(e.source.time || e.reply_id, 1)
       }
+    } catch (err) {
+      logger.debug?.(`[VideoAnalysisTool] 获取引用源失败: ${err?.message}`)
     }
 
     if (source) {
       const sourceArray = Array.isArray(source) ? source : [source]
-
-      quotedImages = sourceArray
-        .flatMap(item => item.message)
-        .filter(msg => msg.type === "video")
-        .map(video => video.url)
+      quotedVideos = sourceArray
+        .flatMap(item => item?.message || [])
+        .filter(m => m?.type === "video")
+        .map(pickVideoUrl)
+        .filter(Boolean)
     }
 
-    /**
-     * 如果没有引用消息中的图片，且消息中没有图片，则获取引用消息的发送者头像
-     */
-    if (
-      quotedImages.length === 0 &&
-      imagesInMessage.length === 0 &&
-      source &&
-      (e.source || e.reply_id)
-    ) {
-      const sourceArray = Array.isArray(source) ? source : [source]
-      const quotedUser = sourceArray[0].sender.user_id
-    }
-
-    return quotedImages
+    // 优先用当前消息中的视频，没有再用引用消息中的
+    return [...videosInMessage, ...quotedVideos]
   }
 
   /**
@@ -193,32 +188,21 @@ export class VideoAnalysisTool extends AbstractTool {
   }
 
   async func(opts, e) {
-    logger.error("调用了视频识别工具:", 6666)
     try {
-      let text = e.msg || null
-      let video = null
-
-      const images = await this.getVideo(e)
-      if (e.video && e.video.length > 0) {
-        video = e.video[0] || images[0]
-      } else {
-        video = images[0]
+      const videos = await this.getVideo(e)
+      const video = videos[0]
+      if (!video) {
+        return { error: "视频分析失败: 当前消息和引用消息里都没找到视频" }
       }
-      if (!video) return { error: `视频分析失败: 没有找到视频链接` }
-      let prompt = text
-      let res = await this.Video(prompt, video)
+      const prompt = (opts?.prompt || e.msg || "请分析这个视频内容").toString().trim() || "请分析这个视频内容"
+      const res = await this.Video(prompt, video)
 
-      if (res.choices) {
-        return {
-          analysis: res.choices[0]?.message.content,
-        }
-      } else {
-        return {
-          error: "识别失败,可能是含有违规内容",
-        }
+      if (res?.choices) {
+        return { analysis: res.choices[0]?.message?.content }
       }
+      return { error: "识别失败,可能是含有违规内容" }
     } catch (error) {
-      console.error("视频分析过程发生错误:", error)
+      logger.error?.("[VideoAnalysisTool] 分析过程异常:", error)
       return { error: `视频分析失败: ${error.message}` }
     }
   }

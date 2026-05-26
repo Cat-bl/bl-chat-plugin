@@ -332,7 +332,7 @@ export class MessageManager {
     const isBot = message.sender.user_id === Bot.uin;
 
     return {
-      time: moment(message.time * 1000).format('MM-DD HH:mm:ss'),
+      time: moment(message.time * 1000).format('YYYY-MM-DD HH:mm:ss'),
       sender: {
         user_id: message.sender.user_id,
         nickname: isBot ? Bot.nickname : (message.sender.card || message.sender.nickname),

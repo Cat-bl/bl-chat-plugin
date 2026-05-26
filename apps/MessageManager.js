@@ -1,4 +1,5 @@
 import { MessageManager } from '../utils/MessageManager.js'
+import { emojiPackManager } from '../utils/EmojiPackManager.js'
 import fs from 'fs';
 import YAML from 'yaml';
 export class MessageRecordPlugin extends plugin {
@@ -41,6 +42,7 @@ export class MessageRecordPlugin extends plugin {
 
     async onMessage(e) {
         await this.messageManager.recordMessage(e);
+        emojiPackManager.maybeAutoCollect(e).catch(() => {});
         return false;
     }
 

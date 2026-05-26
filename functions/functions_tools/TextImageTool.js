@@ -158,7 +158,8 @@ function charUnits(char) {
 }
 
 function measureTextWidth(text, fontSize, monospace = false) {
-  if (monospace) return Math.max(1, [...String(text)].length) * fontSize * 0.62
+  // monospace 字体下中文同样占两个等宽字符宽度（与 wrapText 的 charUnits 保持一致）
+  if (monospace) return [...String(text)].reduce((sum, char) => sum + charUnits(char) * fontSize * 0.62, 0)
   return [...String(text)].reduce((sum, char) => sum + charUnits(char) * fontSize * 0.52, 0)
 }
 
@@ -355,8 +356,9 @@ function createTextBlock(type, text, options = {}) {
 function createCodeBlock(lines, language = "") {
   const wrappedLines = []
 
+  // 58 units 对应 bubbleWidth 上限 820 时的 code 区有效宽度（留余量防止边距溢出）
   for (const line of lines.length ? lines : [""]) {
-    wrappedLines.push(...wrapText(line || " ", 62))
+    wrappedLines.push(...wrapText(line || " ", 58))
   }
 
   const labelHeight = language ? 26 : 0
@@ -405,8 +407,41 @@ function inferCodeLanguage(lines) {
     .sort((a, b) => b.score - a.score)[0]
 }
 
+function looksLikeMarkdown(text) {
+  const src = String(text || "")
+  if (!src) return false
+
+  // 强信号：以下任一命中即认为是 markdown
+  // - markdown 二级以上标题 ## xxx / ### xxx（单 # 容易和 bash/python 行注释 "# 注释" 撞，剔除）
+  if (/^#{2,3}\s+\S/m.test(src)) return true
+  // - markdown 引用 > xxx（代码里 > 通常在行中而非行首）
+  if (/^>\s+\S/m.test(src)) return true
+
+  // 弱信号：单独命中不足以判定（避免和代码/yaml/shell 混淆），需要至少两类联合
+  let weakSignals = 0
+  // 加粗 **xxx**（至少 2 处）
+  const boldMatches = src.match(/\*\*[^*\n]+\*\*/g)
+  if (boldMatches && boldMatches.length >= 2) weakSignals++
+  // 无序列表 - xxx / * xxx / + xxx（≥ 3 行）
+  const listLines = src.split(/\r?\n/).filter(line => /^\s*[-*+]\s+\S/.test(line)).length
+  if (listLines >= 3) weakSignals++
+  // 有序列表 1. xxx 2. xxx（≥ 2 行）
+  const orderedListLines = src.split(/\r?\n/).filter(line => /^\s*\d+\.\s+\S/.test(line)).length
+  if (orderedListLines >= 2) weakSignals++
+  // 行内代码 `xxx`（≥ 2 处）
+  const inlineCode = src.match(/`[^`\n]+`/g)
+  if (inlineCode && inlineCode.length >= 2) weakSignals++
+  // markdown 链接 [text](url)：要求 url 像真 URL（含 :// 或 / 或 . 后缀），且 text 至少 2 字符
+  // 这样 python/js 代码里 arr[i](x) / dict["k"](v) 不会误命中
+  if (/\[[^\]\n]{2,}\]\((?:https?:\/\/|\/|\.\/|#)[^)\n]+\)/.test(src)) weakSignals++
+
+  return weakSignals >= 2
+}
+
 function getPlainCodeBlock(text) {
   if (String(text).includes("```")) return null
+  // markdown 特征明显的内容不走"无栅栏代码块"识别
+  if (looksLikeMarkdown(text)) return null
 
   const rawLines = String(text || "").split(/\r?\n/)
   const lines = rawLines.filter(line => line.trim())

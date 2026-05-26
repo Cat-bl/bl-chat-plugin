@@ -32,12 +32,13 @@ async function tryAcquireReminderLock(lockValue, allowExpiredTakeover = false) {
 
   return false
 }
-const LOCK_TIMEOUT = 5000 // 锁超时时间（毫秒）
+const LOCK_TIMEOUT = 5000 // 锁本身的最长持有时间（redis PX），到期自动释放
+const LOCK_ACQUIRE_TIMEOUT = 1500 // 获取锁的最大等待时间，超时返回 null 让本轮 cron 跳过
 
 /**
  * 简单的分布式锁实现
  */
-async function acquireLock(timeout = LOCK_TIMEOUT) {
+async function acquireLock(timeout = LOCK_ACQUIRE_TIMEOUT) {
   const lockValue = Date.now().toString()
   const endTime = Date.now() + timeout
 
@@ -401,20 +402,19 @@ export async function checkPendingReminders(toolInstances) {
   try {
     const now = Date.now()
 
-    // 带锁获取并立即移除到期的提醒（防止重复触发）
+    // 先无锁 peek：90% 时间池子为空或全是未到期项，根本不用进锁
+    const peekList = await getPendingList()
+    if (!peekList || peekList.length === 0) return
+    const hasDue = peekList.some(item => item.trigger_time <= now)
+    if (!hasDue) return
+
+    // 确认有到期项才进锁，二次过滤（防止并发已被其他实例取走）
     const dueReminders = await withLock(async () => {
       const pendingList = await getPendingList()
+      if (!pendingList || pendingList.length === 0) return []
 
-      if (!pendingList || pendingList.length === 0) {
-        return []
-      }
-
-      // 找出所有到期的提醒
       const due = pendingList.filter(item => item.trigger_time <= now)
-
-      if (due.length === 0) {
-        return []
-      }
+      if (due.length === 0) return []
 
       // 立即从列表中移除（先移除再处理，防止下一秒 cron 重复触发）
       const remaining = pendingList.filter(item => item.trigger_time > now)
@@ -444,6 +444,11 @@ export async function checkPendingReminders(toolInstances) {
     }
 
   } catch (error) {
+    // 锁超时是预期可恢复事件（下次 cron 再试），降级为 debug 避免每秒刷红
+    if (String(error?.message || '').includes('获取锁超时')) {
+      logger.debug(`[ReminderTool] 本轮跳过：${error.message}`)
+      return
+    }
     logger.error('[ReminderTool] 检查待触发提醒失败:', error)
   }
 }

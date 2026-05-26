@@ -187,8 +187,7 @@ function convertToolMessagesForChat(messages = [], fallbackToolName = 'tool') {
         if (msg.role === 'assistant' && msg.tool_calls?.length) {
             const requests = msg.tool_calls.map((toolCall, index) => {
                 const name = toolCall.function?.name || fallbackToolName || 'tool';
-                const args = toolCall.function?.arguments || '{}';
-                return `${index + 1}. ${name} ${args}`;
+                return `${index + 1}. ${name}`;
             });
 
             const results = [];
@@ -196,7 +195,7 @@ function convertToolMessagesForChat(messages = [], fallbackToolName = 'tool') {
                 i++;
                 const toolMsg = messages[i];
                 const name = toolMsg.name || fallbackToolName || 'tool';
-                results.push(`${results.length + 1}. ${summarizeToolResultForChat(name, toolMsg.content)}`);
+                results.push(summarizeToolResultForChat(name, toolMsg.content));
             }
 
             converted.push({
@@ -216,7 +215,7 @@ function convertToolMessagesForChat(messages = [], fallbackToolName = 'tool') {
             const name = msg.name || fallbackToolName || 'tool';
             converted.push({
                 role: 'system',
-                content: `[tool_execution]\nresults:\n1. ${summarizeToolResultForChat(name, msg.content)}`
+                content: `[tool_execution]\nresults:\n${summarizeToolResultForChat(name, msg.content)}`
             });
             continue;
         }
@@ -251,7 +250,7 @@ function moveFinalToolPromptToEnd(messages = []) {
 
 function summarizeToolResultForChat(toolName, content = '') {
     const text = String(content || '');
-    return `name: ${toolName}\ncontent: ${text}`;
+    return `content: ${text}`;
 }
 function processResponse(responseData) {
     // 处理数组响应（兼容某些 API 返回数组的情况）
