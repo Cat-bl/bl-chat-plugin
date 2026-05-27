@@ -54,6 +54,8 @@ const consecutiveInterrupts = new Map() // groupId -> count
 // 禁言状态短期缓存：避免每条群消息都查一次 ws RPC pickMember.getInfo()
 const mutedStatusCache = new Map() // groupId -> { isMuted, at }
 const MUTED_CACHE_TTL_MS = 30000
+const groupContextCache = new Map()
+const GROUP_CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000
 let activeChatLruTimer = null // 全局 24h LRU 扫描定时器，进程内单例
 const roleMap = { owner: "owner", admin: "admin", member: "member" }
 const PSEUDO_TOOL_MARKERS = [
@@ -684,6 +686,90 @@ export class ExamplePlugin extends plugin {
     })
 
     logger.info('[定时任务] 提醒检查任务已启动（每秒）')
+  }
+
+  async callOneBotApi(e, action, params = {}) {
+    const bot = e?.bot
+      || (typeof Bot !== "undefined" ? Bot : null)
+      || (typeof globalThis.bot !== "undefined" ? globalThis.bot : null)
+      || (typeof globalThis.Bot !== "undefined" ? globalThis.Bot : null)
+
+    if (!bot?.sendApi) throw new Error("找不到 OneBot API 调用接口")
+    return await bot.sendApi(action, params)
+  }
+
+  normalizeGroupContextText(value, maxLength = 800) {
+    return String(value || "")
+      .replace(/\r\n/g, "\n")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+      .slice(0, maxLength)
+  }
+
+  pickNoticeText(value) {
+    if (!value) return ""
+    if (typeof value === "string") return value
+    if (Array.isArray(value)) return value.map(item => this.pickNoticeText(item)).filter(Boolean).join("")
+    if (typeof value !== "object") return ""
+
+    for (const key of ["content", "text", "msg", "message", "notice", "title", "data"]) {
+      const text = this.pickNoticeText(value[key])
+      if (text) return text
+    }
+    return ""
+  }
+
+  extractGroupNoticeText(response) {
+    const payload = response?.data ?? response
+    const notices = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.notices)
+        ? payload.notices
+        : Array.isArray(payload?.notice)
+          ? payload.notice
+          : [payload].filter(Boolean)
+
+    const sorted = notices.slice().sort((a, b) => {
+      const getTime = item => Number(item?.publish_time || item?.time || item?.create_time || item?.updated_at || 0)
+      return getTime(b) - getTime(a)
+    })
+
+    for (const notice of sorted) {
+      const text = this.normalizeGroupContextText(this.pickNoticeText(notice), 800)
+      if (text) return text
+    }
+    return ""
+  }
+
+  async getCurrentGroupContext(e) {
+    const groupId = String(e?.group_id || "")
+    if (!groupId) return { groupId: "", groupName: "", groupNotice: "" }
+
+    const groupName = this.normalizeGroupContextText(
+      e?.group_name || e?.group?.name || e?.group?.info?.group_name || e?.group?.info?.name,
+      120
+    )
+
+    const cached = groupContextCache.get(groupId)
+    if (cached && Date.now() - cached.at < GROUP_CONTEXT_CACHE_TTL_MS) {
+      return { ...cached.data, groupName }
+    }
+
+    let groupNotice = ""
+    for (const action of ["get_group_notice", "_get_group_notice"]) {
+      try {
+        const noticeRes = await this.callOneBotApi(e, action, { group_id: Number(groupId) })
+        groupNotice = this.extractGroupNoticeText(noticeRes)
+        if (groupNotice) break
+      } catch (error) {
+        logger.debug?.(`[群上下文] ${action} 获取群公告失败 group=${groupId}: ${error.message}`)
+      }
+    }
+
+    const data = { groupId, groupName, groupNotice }
+    groupContextCache.set(groupId, { at: Date.now(), data })
+    return data
   }
 
   shouldUseTextImageForFinalReply({ content, output, session, toolName, e }) {
@@ -2828,6 +2914,7 @@ ${recentHistory || '(无)'}
       }
 
       // 构建增强系统提示
+      const groupContext = await limit(() => this.getCurrentGroupContext(e))
       const enhancedPrompts = [emotionPrompt, memoryPrompt, groupMemoryPrompt, expressionPrompt, knowledgePrompt, personProfilePrompt].filter(Boolean).join('\n')
 
       const systemContent = `
@@ -2838,7 +2925,12 @@ ${this.config.systemContent}
 
 实时数据
 ${JSON.stringify({
-        group_info: { administrators: await limit(() => getHighLevelMembers(e.group)) },
+        group_info: {
+          group_id: groupContext.groupId,
+          group_name: groupContext.groupName,
+          group_notice: groupContext.groupNotice,
+          administrators: await limit(() => getHighLevelMembers(e.group))
+        },
         environmental_factors: { local_time: "北京时间: " + new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) }
       }, null, 2)}
 2.【消息格式】
