@@ -292,11 +292,12 @@ function delay(ms) {
 }
 
 function getOrCreateGroupLimiter(limitersMap, groupId, concurrency) {
-  let limiter = limitersMap.get(groupId)
-  if (!limiter) {
-    limiter = pLimit(concurrency)
-    limitersMap.set(groupId, limiter)
+  const entry = limitersMap.get(groupId)
+  if (entry && entry.concurrency === concurrency) {
+    return entry.limiter
   }
+  const limiter = pLimit(concurrency)
+  limitersMap.set(groupId, { limiter, concurrency })
   return limiter
 }
 
