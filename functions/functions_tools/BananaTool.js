@@ -169,10 +169,16 @@ export class BananaTool extends AbstractTool {
       return `base64://${base64Match[1]}`;
     }
 
-    // 匹配 https 链接
+    // 匹配带扩展名的 http/https 链接
     const httpsMatch = content.match(/https?:\/\/[^\s)'"<>]+\.(png|jpg|jpeg|gif|webp|bmp)[^\s)'"<>]*/i);
     if (httpsMatch) {
       return httpsMatch[0];
+    }
+
+    // 匹配通用 http/https 链接
+    const httpMatch = content.match(/https?:\/\/[^\s)'"<>]+/);
+    if (httpMatch) {
+      return httpMatch[0];
     }
 
     return null;
