@@ -1,5 +1,6 @@
 const _path = process.cwd()
 import axios from "axios";
+import _ from "lodash";
 import mimeTypes from 'mime-types';
 import fs from "fs";
 import path from "path";

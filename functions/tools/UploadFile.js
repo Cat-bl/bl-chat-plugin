@@ -1,4 +1,5 @@
 import axios from '../../node_modules/axios/index.js';
+import _ from 'lodash';
 import { dependencies } from "../../dependence/dependencies.js";
 import { refreshTencentImageUrl } from '../../utils/fileUtils.js';
 const { mimeTypes } = dependencies;
@@ -115,14 +116,6 @@ async function extractDomain(url) {
     return url.slice(0, ampIndex);
   }
   return url;
-}
-
-export async function TakeFiles(e) {
-  let files = await getFileUrl(e, e.group_id ? 'group' : 'friend');
-  if (files) {
-    files = [files]
-  }
-  return files
 }
 
 export async function getBufferFile(fileUrl, filename) {

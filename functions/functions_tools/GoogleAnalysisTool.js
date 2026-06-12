@@ -1,7 +1,7 @@
 import { AbstractTool } from './AbstractTool.js';
 import { getBase64Image, normalizeImageUrls } from '../../utils/fileUtils.js';
 import { dependencies } from "../../dependence/dependencies.js";
-const { mimeTypes } = dependencies;
+const { mimeTypes, axios } = dependencies;
 import fs from "fs";
 import YAML from "yaml";
 import path from "path";

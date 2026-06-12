@@ -8,13 +8,13 @@ import { bilibiliParser } from '../../functions/tools/bilibilivideoanalysis.js';
 const streamPipeline = promisify(pipeline);
 
 export const sendvideos = async (answer, e) => {
+  const TEMP_DIR = './resources/temp_videos'; // 临时文件夹
   try {
     const results = await bilibiliParser(answer);
     let validVideosSent = 0;
     const MAX_VIDEOS = 2;
     const MAX_SIZE_MB = 30;
     const TIMEOUT_MS = 40000; // 40秒超时
-    const TEMP_DIR = './resources/temp_videos'; // 临时文件夹
 
     // 确保临时文件夹存在
     if (!fs.existsSync(TEMP_DIR)) {
