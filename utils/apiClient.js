@@ -53,7 +53,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             let openaiData;
             try {
                 openaiData = await openaiResponse.json();
-                logger.error('OpenAI 响应:', JSON.stringify(openaiData, null, 2));
+                logger.debug('OpenAI 响应:', JSON.stringify(openaiData, null, 2));
             } catch (openaiJsonError) {
                 console.error("解析 OpenAI 响应 JSON 失败:", openaiJsonError);
                 return { error: `解析 OpenAI 响应 JSON 失败：${openaiJsonError.message}` };
@@ -135,7 +135,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
         finalRequestData.messages = moveFinalToolPromptToEnd(
             removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages)
         )
-        console.log('最终请求体:', finalRequestData);
+        logger.debug('最终请求体:', finalRequestData);
         try {
             response = await fetch(url, {
                 method: 'POST',
@@ -270,14 +270,4 @@ function processResponse(responseData) {
 
     // 其他类型直接返回
     return { error: `Invalid response format: ${JSON.stringify(responseData)}` };
-}
-
-function getNextApiKey() {
-    const apiKeys = [
-        "a1eef00f6bce4a10a7de83936fce6492.0wDYtwPnWukoPxWj"
-    ]
-    const randomIndex = Math.floor(Math.random() * apiKeys.length)
-    const apiKey = apiKeys[randomIndex]
-    console.log("负载均衡-散列-使用API key:", apiKey)
-    return apiKey
 }

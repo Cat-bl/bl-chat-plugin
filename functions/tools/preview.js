@@ -3,13 +3,10 @@ const require = createRequire(import.meta.url);
 const puppeteer = require('puppeteer');
 import fs from 'fs';
 import path from 'path';
-import { exec, spawn } from 'child_process';
 import util from 'util';
 import http from 'http';
 import https from 'https';
 
-// 将 exec 转换为返回 Promise 的函数，方便使用 async/await
-const execAsync = util.promisify(exec);
 
 /**
  * 提取并渲染各类代码块和图片链接
@@ -762,225 +759,22 @@ async function handleSpecialFrontendRendering(page, language, code) {
 }
 
 /**
- * 执行后端语言代码并返回执行结果
+ * 执行后端语言代码（已禁用，固定返回 null）
+ *
+ * 安全说明：原实现把 LLM 生成的代码写入临时文件后，用 shell:true 的子进程
+ * 直接在宿主机上执行，仅靠关键字黑名单做"消毒"（黑名单极易绕过，启用即等同
+ * 于把宿主机命令执行权交给群成员）。该路径目前在全项目中没有任何调用方
+ * （extractAndRender 未被使用），为防止未来被误启用造成远程代码执行风险，
+ * 此函数已永久短路，行为与"不支持的语言"一致（返回 null，调用方跳过执行）。
+ * 如确实需要代码执行能力，必须改用真正的沙箱（容器/虚拟机隔离），不要恢复旧实现。
  * @param {string} language - 语言类型
  * @param {string} code - 代码内容
- * @returns {Promise<Object|null>} - 执行结果或 null
+ * @returns {Promise<null>} - 恒为 null
  */
 async function executeBackendCode(language, code) {
-  // 临时文件路径，使用 process.cwd() 代替 __dirname，避免路径问题
-  const tempDir = path.join(process.cwd(), 'temp_code_exec');
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-  }
-
-  // 根据语言选择文件扩展名和执行命令
-  let fileExtension, execCommand, compileCommand, runCommand;
-
-  switch (language.toLowerCase()) {
-    case 'javascript':
-      fileExtension = 'js';
-      execCommand = 'node';
-      break;
-    case 'typescript':
-      fileExtension = 'ts';
-      execCommand = 'node';
-      compileCommand = 'tsc'; // 使用全局安装的 tsc 命令
-      break;
-    case 'python':
-      fileExtension = 'py';
-      execCommand = 'python3';
-      break;
-    case 'java':
-      fileExtension = 'java';
-      execCommand = 'java';
-      compileCommand = 'javac';
-      break;
-    case 'c++':
-      fileExtension = 'cpp';
-      execCommand = path.join(tempDir, 'temp_executable');
-      compileCommand = 'g++';
-      break;
-    case 'c':
-      fileExtension = 'c';
-      execCommand = path.join(tempDir, 'temp_executable');
-      compileCommand = 'gcc';
-      break;
-    case 'ruby':
-      fileExtension = 'rb';
-      execCommand = 'ruby';
-      break;
-    case 'go':
-      fileExtension = 'go';
-      execCommand = 'go run';
-      break;
-    default:
-      console.warn(`不支持的后端语言: ${language}`);
-      return null;
-  }
-
-  const fileName = `temp_code.${fileExtension}`;
-  const filePath = path.join(tempDir, fileName);
-
-  try {
-    // 对代码进行安全校验和消毒
-    const sanitizedCode = sanitizeCode(language, code);
-    if (!sanitizedCode) {
-      throw new Error('代码未通过安全校验');
-    }
-
-    // 写入临时代码文件
-    fs.writeFileSync(filePath, sanitizedCode, 'utf-8');
-
-    // 如果需要编译，先编译
-    if (compileCommand) {
-      if (language.toLowerCase() === 'java') {
-        // 编译 Java 代码
-        console.log(`正在编译 Java 代码: ${fileName}`);
-        await execAsync(`${compileCommand} ${fileName}`, { cwd: tempDir, timeout: 10000 });
-        // Java 执行需要指定类名
-        const classNameMatch = sanitizedCode.match(/class\s+(\w+)/);
-        if (!classNameMatch) {
-          throw new Error('Java 代码中必须包含类名');
-        }
-        const className = classNameMatch[1];
-        runCommand = `${execCommand} ${className}`;
-      } else if (language.toLowerCase() === 'c' || language.toLowerCase() === 'c++') {
-        // 编译 C/C++ 代码
-        console.log(`正在编译 ${language} 代码: ${fileName}`);
-        await execAsync(`${compileCommand} ${fileName} -o temp_executable`, { cwd: tempDir, timeout: 10000 });
-        runCommand = execCommand; // './temp_executable'
-      } else if (language.toLowerCase() === 'typescript') {
-        // 编译 TypeScript 代码
-        console.log(`正在编译 TypeScript 代码: ${fileName}`);
-        await execAsync(`${compileCommand} ${fileName}`, { cwd: tempDir, timeout: 10000 });
-        // 执行编译后的 JavaScript 代码
-        const jsFile = fileName.replace('.ts', '.js');
-        runCommand = `${execCommand} ${jsFile}`;
-      }
-    } else {
-      // 直接执行脚本语言
-      runCommand = `${execCommand} ${fileName}`;
-    }
-
-    // 使用 spawn 代替 exec 以更好地控制子进程
-    const spawnOptions = {
-      cwd: tempDir,
-      timeout: 10000, // 10秒超时
-      maxBuffer: 1024 * 1024, // 最大缓冲区1MB
-      shell: true,
-      env: {}, // 清空环境变量，避免泄露
-      stdio: ['ignore', 'pipe', 'pipe']
-    };
-
-    console.log(`正在执行命令: ${runCommand}`);
-
-    // 启动子进程
-    const child = spawn(runCommand, [], spawnOptions);
-
-    let stdout = '';
-    let stderr = '';
-
-    // 捕获标准输出
-    child.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    // 捕获标准错误
-    child.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    // 等待子进程结束
-    const exitCode = await new Promise((resolve, reject) => {
-      child.on('close', resolve);
-      child.on('error', reject);
-    });
-
-    console.log(`命令执行完成，退出代码: ${exitCode}`);
-
-    if (exitCode !== 0) {
-      return {
-        output: stdout,
-        error: stderr || `进程以代码 ${exitCode} 退出`
-      };
-    }
-
-    return {
-      output: stdout,
-      error: stderr
-    };
-
-  } catch (error) {
-    console.error(`执行 ${language} 代码时出错:`, error);
-    return {
-      output: '',
-      error: error.message
-    };
-  } finally {
-    // 清理临时文件
-    try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-      // 清理编译生成的文件
-      if (compileCommand) {
-        if (language.toLowerCase() === 'java') {
-          const classFile = path.join(tempDir, `${fileName.replace('.java', '')}.class`);
-          if (fs.existsSync(classFile)) {
-            fs.unlinkSync(classFile);
-          }
-        } else if (language.toLowerCase() === 'c' || language.toLowerCase() === 'c++') {
-          const execPath = path.join(tempDir, 'temp_executable');
-          if (fs.existsSync(execPath)) {
-            fs.unlinkSync(execPath);
-          }
-        } else if (language.toLowerCase() === 'typescript') {
-          const jsFile = path.join(tempDir, fileName.replace('.ts', '.js'));
-          if (fs.existsSync(jsFile)) {
-            fs.unlinkSync(jsFile);
-          }
-        }
-      }
-    } catch (cleanupError) {
-      console.error('清理临时文件时出错:', cleanupError);
-    }
-  }
-}
-
-/**
- * 对代码进行安全校验和消毒
- * @param {string} language - 语言类型
- * @param {string} code - 代码内容
- * @returns {string|null} - 消毒后的代码或 null
- */
-function sanitizeCode(language, code) {
-  // 禁止某些关键字
-  const forbiddenKeywords = [
-    'require',
-    'import',
-    'fs',
-    'child_process',
-    'process',
-    'exec',
-    'spawn',
-    'eval',
-    'document',
-    'window'
-  ];
-
-  const lowerCode = code.toLowerCase();
-  for (const keyword of forbiddenKeywords) {
-    if (lowerCode.includes(keyword)) {
-      console.warn(`代码包含禁止使用的关键字: ${keyword}`);
-      return null;
-    }
-  }
-
-  // 针对不同语言可以添加更多的消毒规则
-  // 例如，对于 JavaScript/TypeScript，可以进一步检查是否存在不安全的代码模式
-
-  return code;
+  void language
+  void code
+  return null
 }
 
 /**
