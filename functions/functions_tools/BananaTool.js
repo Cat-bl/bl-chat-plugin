@@ -5,7 +5,7 @@ import fs from "fs";
 import YAML from "yaml";
 import path from "path";
 
-const { mimeTypes } = dependencies;
+const { mimeTypes, axios } = dependencies;
 
 export class BananaTool extends AbstractTool {
   constructor() {

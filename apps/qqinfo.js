@@ -5,10 +5,11 @@ export class QQinfo extends plugin {
         super({
             name: "进群查询qq信息",
             dsc: "进群查询qq信息",
-            event: "notice.group.increase",
+            event: "message",
             priority: 5000,
             rule: [
                 {
+                    reg: '#查询qq.*$',
                     fnc: "getInfo",
                 }
             ]
@@ -16,14 +17,19 @@ export class QQinfo extends plugin {
     }
 
     async getInfo(e) {
-        return
-        if (this.e.user_id == this.e.self_id) return
         const bot = e.bot ?? Bot
+        let atMsg
+        atMsg = e.message?.filter(msg => {
+            return msg.type == "at"
+        })[0]
+        let mid = atMsg?.qq || e.msg.replace(/#| |查询qq/g, "")
+        if (mid == "") {
+            return e.reply("请输入qq号或者直接艾特再发送命令", true)
+        }
         // 获取用户
         const KEY_DATA = await bot.sendApi('get_credentials', {
             domain: "vip.qq.com",
         })
-
         // logger.info(KEY_DATA.data.cookies, 666)
 
         const skeyRegex = /skey=([^;]+)/.exec(KEY_DATA.data.cookies)
@@ -32,11 +38,11 @@ export class QQinfo extends plugin {
 
         const skey = skeyRegex?.[1] // 输出 @sFOi60Ji4
         const p_skey = pSkeyRegex?.[1] // 输出 RLsR0kc5JtYiGuHxndsBYRQh3ugVWBVvdMstgQXrEdc_
-        const url = `http://jiuli.xiaoapi.cn/i/qq/qq_level.php?qq=${e.user_id}&return=json&uin=${uinRegex}&skey=${skey}&pskey=${p_skey}`
+        const url = `http://jiuli.xiaoapi.cn/i/qq/qq_level.php?qq=${mid}&return=json&uin=${uinRegex}&skey=${skey}&pskey=${p_skey}`
         logger.info(url)
         const DATA_JSON = await fetch(url).then(res => res.json())
 
-        DATA_JSON.cardTitle = '来新人啦！欢迎新人！！！'
+        DATA_JSON.cardTitle = '信息查询成功！！！'
         logger.info(DATA_JSON, 88)
         // const data = {
         //     saveId: "qqinfo",

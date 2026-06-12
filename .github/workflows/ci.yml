@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # --ignore-scripts: 跳过 puppeteer/sharp 的二进制下载，lint 和单测不需要
+      - run: pnpm install --ignore-scripts
+
+      - run: pnpm lint
+
+      - run: pnpm test

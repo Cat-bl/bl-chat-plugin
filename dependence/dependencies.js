@@ -15,7 +15,6 @@ import common from "../../../lib/common/common.js";
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 import FormData from 'form-data';
-import request from "request";
 import WebSocket from 'ws';
 import axios from "axios";
 import { getEncoding } from 'js-tiktoken';
@@ -39,7 +38,6 @@ export const dependencies = {
   YAML,
   crypto,
   require,
-  request,
   moment,
   common,
   getEncoding,
