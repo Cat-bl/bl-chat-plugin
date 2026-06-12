@@ -1,6 +1,5 @@
 import { access, appendFile, readFile } from "fs/promises"
 import crypto from "crypto"
-import chalk from "chalk"
 
 class KnowledgeExpander {
   constructor({ apiKey, apiUrl, dbPath = "./knowledge-db.ndjson", model = "text-embedding-3-small" }) {
@@ -56,7 +55,7 @@ class KnowledgeExpander {
 
   async loadKnowledgeDB() {
     if (!(await this.fileExists(this.dbPath))) {
-      console.log(chalk.yellow(`[KnowledgeExpander] 未找到知识库文件：${this.dbPath}`))
+      console.log((`[KnowledgeExpander] 未找到知识库文件：${this.dbPath}`))
       return []
     }
 
@@ -89,7 +88,7 @@ class KnowledgeExpander {
       }])
       return true
     } catch (error) {
-      console.error(chalk.red("[KnowledgeExpander] embedding 生成失败:"), error.message)
+      console.error(("[KnowledgeExpander] embedding 生成失败:"), error.message)
       return false
     }
   }
@@ -116,11 +115,11 @@ class KnowledgeExpander {
     }
 
     if (newTexts.length === 0) {
-      console.log(chalk.green("[KnowledgeExpander] 所有知识都已存在"))
+      console.log(("[KnowledgeExpander] 所有知识都已存在"))
       return { added: 0, total: incomingTexts.length, success: true }
     }
 
-    console.log(chalk.blue(`[KnowledgeExpander] 正在写入 ${newTexts.length} 条知识到 ${this.dbPath}`))
+    console.log((`[KnowledgeExpander] 正在写入 ${newTexts.length} 条知识到 ${this.dbPath}`))
 
     try {
       const res = await this.getEmbedding(newTexts)
@@ -135,15 +134,15 @@ class KnowledgeExpander {
 
       await this.appendKnowledgeItems(items)
 
-      console.log(chalk.green(`[KnowledgeExpander] 已新增 ${items.length} 条，跳过 ${incomingTexts.length - items.length} 条`))
+      console.log((`[KnowledgeExpander] 已新增 ${items.length} 条，跳过 ${incomingTexts.length - items.length} 条`))
       return {
         added: items.length,
         total: incomingTexts.length,
         success: items.length > 0
       }
     } catch (error) {
-      console.error(chalk.red("[KnowledgeExpander] 批量 embedding 失败:"), error.message)
-      console.log(chalk.yellow("[KnowledgeExpander] 回退为逐条生成 embedding"))
+      console.error(("[KnowledgeExpander] 批量 embedding 失败:"), error.message)
+      console.log(("[KnowledgeExpander] 回退为逐条生成 embedding"))
 
       let successCount = 0
       for (const text of newTexts) {

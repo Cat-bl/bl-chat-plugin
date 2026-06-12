@@ -1,5 +1,4 @@
 import { access, readFile, stat } from "fs/promises"
-import chalk from "chalk"
 
 class KnowledgeSearcher {
   constructor({
@@ -67,7 +66,7 @@ class KnowledgeSearcher {
 
   async loadKnowledgeDB() {
     if (!(await this.fileExists(this.dbPath))) {
-      console.log(chalk.yellow(`[KnowledgeSearcher] 未找到知识库文件：${this.dbPath}`))
+      console.log((`[KnowledgeSearcher] 未找到知识库文件：${this.dbPath}`))
       this.cache = { mtimeMs: 0, items: [], loaded: true }
       return []
     }
@@ -170,7 +169,7 @@ class KnowledgeSearcher {
   async search(userQuestion) {
     const db = await this.loadKnowledgeDB()
     if (db.length === 0) {
-      console.log(chalk.red(`[KnowledgeSearcher] 知识库为空：${this.dbPath}`))
+      console.log((`[KnowledgeSearcher] 知识库为空：${this.dbPath}`))
       return null
     }
 
@@ -179,7 +178,7 @@ class KnowledgeSearcher {
     const matches = this.rankMatches(db, questionEmbedding, userQuestion)
 
     if (matches.length === 0) {
-      console.log(chalk.yellow("[KnowledgeSearcher] 没有匹配到知识"))
+      console.log(("[KnowledgeSearcher] 没有匹配到知识"))
       return null
     }
 
@@ -190,7 +189,7 @@ class KnowledgeSearcher {
   async batchSearch(userQuestions = []) {
     const db = await this.loadKnowledgeDB()
     if (db.length === 0) {
-      console.log(chalk.red(`[KnowledgeSearcher] 知识库为空：${this.dbPath}`))
+      console.log((`[KnowledgeSearcher] 知识库为空：${this.dbPath}`))
       return userQuestions.map(() => null)
     }
 

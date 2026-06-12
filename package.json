@@ -1,54 +1,52 @@
 {
   "name": "bl-chat-plugin",
-  "description": "测试",
+  "description": "Trss Yunzai + Napcat 的 QQ 机器人对话插件，支持 AI 对话、MCP 工具、本地工具、自定义工具、本地表情包系统等",
   "type": "module",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "main": "index.js",
-  "scripts": {},
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node --test tests/"
+  },
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/Cat-bl/bl-chat-plugin"
   },
   "keywords": [
     "Yunzai-Bot",
     "bl-chat-plugin"
   ],
-  "author": "test",
+  "author": "Cat-bl",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "@koa/cors": "^4.0.0",
-    "@koa/router": "^12.0.0",
     "@modelcontextprotocol/sdk": "^1.25.0",
     "axios": "^1.4.0",
-    "chalk": "1.0.0",
-    "crypto-js": "^4.2.0",
-    "dotenv": "^16.4.5",
-    "fetch-undici": "^3.0.1",
+    "chokidar": "^3.6.0",
     "form-data": "^4.0.0",
     "https-proxy-agent": "^7.0.4",
     "js-tiktoken": "^1.0.15",
-    "js-yaml": "^4.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "keyv": "^4.5.2",
-    "keyv-file": "^0.2.0",
-    "koa": "^2.14.2",
-    "koa-bodyparser": "^4.4.1",
-    "koa-static": "^5.0.0",
-    "markmap-common": "^0.18.9",
+    "lodash": "^4.17.21",
     "markmap-lib": "^0.18.11",
+    "md5": "^2.3.0",
     "mime-types": "^2.1.35",
+    "moment": "^2.30.1",
     "node-fetch": "^3.3.2",
-    "openai": "^4.87.3",
+    "node-schedule": "^2.1.1",
     "p-limit": "^6.2.0",
     "pdf-parse": "^1.1.1",
-    "public-ip": "^6.0.1",
     "puppeteer": "^24.10.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "request": "^2.88.2",
     "sharp": "^0.33.5",
     "textract": "^2.5.0",
-    "undici": "^5.22.1",
-    "ws": "^8.13.0"
+    "ws": "^8.13.0",
+    "yaml": "^2.3.4"
+  },
+  "devDependencies": {
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0"
   }
 }
