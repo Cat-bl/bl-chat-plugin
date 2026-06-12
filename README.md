@@ -1074,3 +1074,27 @@ embeddingApiKey: "sk-xxxxx"
 1. 工具调用想被动一些的话可以使用 gemini-2.5-flash，如果想主动一些例如主动发语音、主动贴表情等，可以使用gemini-3-flash-preview
 2. 对话模型实际测试下来还是gemini-2.5-pro综合性更好
 3. 对话追踪判断可以使用响应快并不需要思考的简单模型，例如gemini-2.0，gpt-4o-mini等
+
+# 开发
+
+## 代码检查与测试
+
+```bash
+pnpm install   # 安装依赖（在 plugins/bl-chat-plugin/ 下执行）
+pnpm lint      # ESLint 代码检查
+pnpm test      # 单元测试（node:test，覆盖纯逻辑模块）
+```
+
+push / PR 时 GitHub Actions 会自动执行同样的检查。提交规范与代码约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 目录结构（核心部分）
+
+```
+apps/        Yunzai 插件入口（chat.js 对话主引擎、memory.js 记忆命令、mcp.js MCP 命令等）
+core/        对话引擎组成模块（共享状态、配置管理、会话追踪、消息构建、回复发送等）
+functions/   内置工具（functions_tools/）与辅助函数
+utils/       基础设施（工具注册器、MCP 客户端、记忆/情感/表达学习管理器等）
+custom_tools/ 用户自定义工具目录（不会被更新覆盖）
+config_default/ 默认配置模板（禁止删改，首次启动复制到 config/）
+tests/       单元测试
+```

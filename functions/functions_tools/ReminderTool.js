@@ -396,7 +396,7 @@ export class ReminderTool extends AbstractTool {
 
 /**
  * 检查并触发到期的提醒
- * 此函数由 test.js 的定时任务调用
+ * 此函数由 apps/chat.js 的定时任务调用
  */
 export async function checkPendingReminders(toolInstances) {
   try {
