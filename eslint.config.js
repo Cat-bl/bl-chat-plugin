@@ -54,5 +54,15 @@ export default [
         ...globals.browser
       }
     }
+  },
+  {
+    // y-tian-plugin 遗留的请求封装：代理相关分支被 getAgent() 首行 return false
+    // 刻意短路（Config/HttpsProxyAgent 等未定义变量都在不可达路径里），
+    // QQApi.js 依赖其 get/post，保持原样不动
+    files: ["utils/request.js"],
+    rules: {
+      "no-undef": "off",
+      "no-unreachable": "off"
+    }
   }
 ]
