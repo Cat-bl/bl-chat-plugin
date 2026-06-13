@@ -57,6 +57,7 @@ export class VideoAnalysisTool extends AbstractTool {
             ],
           },
         ],
+        stream: false
       }
 
       const response = await fetch(apiUrl, {
