@@ -214,7 +214,8 @@ export class GoogleImageAnalysisTool extends AbstractTool {
 
                 const requestData = {
                     model: config.analysisAiConfig?.analysisApiModel || "gemini-3-pro-image-preview",
-                    messages: history
+                    messages: history,
+                    stream: false
                 }
 
                 const response = await fetch(apiUrl, {

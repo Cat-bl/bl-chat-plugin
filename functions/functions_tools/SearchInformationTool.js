@@ -122,7 +122,7 @@ export class SearchInformationTool extends AbstractTool {
       const apiUrl = config.searchAiConfig?.searchApiUrl || 'https://api.openai.com/v1/chat/completions'
       const apiKey = config.searchAiConfig?.searchApiKey || 'sk-xxxxxx'
 
-      const requestData = { "model": config.searchAiConfig?.searchApiModel || 'deepseek-r1-search', "messages": [{ "role": "user", "content": "请联网搜索：" + query }], "temperature": 1, "top_p": 0.1 }
+      const requestData = { "model": config.searchAiConfig?.searchApiModel || 'deepseek-r1-search', "messages": [{ "role": "user", "content": "请联网搜索：" + query }], "stream": false }
 
       const response = await fetch(apiUrl, {
         method: "POST",
