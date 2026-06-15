@@ -13,7 +13,7 @@ const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for 
 function convertToAnthropicFormat(requestData, originalRequestData) {
     const anthropicRequest = {
         model: requestData.model,
-        max_tokens: 8192,
+        max_tokens: 16000,
         messages: []
     }
 
@@ -85,6 +85,8 @@ function convertToAnthropicFormat(requestData, originalRequestData) {
     anthropicRequest.metadata = {
         user_id: `user_${'0'.repeat(64)}_account__session_00000000-0000-4000-8000-000000000000`
     }
+
+    anthropicRequest.thinking = { type: 'adaptive' }
 
     return anthropicRequest
 }
@@ -170,6 +172,7 @@ describe('Anthropic 请求格式转换', () => {
         assert.strictEqual(result.messages.length, 1);
         assert.strictEqual(result.messages[0].role, 'user');
         assert.strictEqual(result.messages[0].content, '你好');
+        assert.strictEqual(result.thinking.type, 'adaptive');
     });
 
     it('空 messages 数组', () => {

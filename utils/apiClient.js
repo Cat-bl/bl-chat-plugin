@@ -106,16 +106,12 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                     }
                 }
 
-                toolsResponse = await fetch(toolsUrl, {
-                    method: 'POST',
-                    headers: toolsHeaders,
-                    body: JSON.stringify(toolsRequestData)
-                });
+                const toolsResult = await fetchWithThinkingFallback(toolsUrl, toolsHeaders, toolsRequestData);
+                toolsResponse = toolsResult.response;
 
                 if (!toolsResponse.ok) {
-                    const errorText = await toolsResponse.text().catch(() => '无法读取错误内容');
-                    logger.error(`工具 API 请求失败：${toolsResponse.status} ${toolsResponse.statusText} - ${errorText}`);
-                    return { error: `工具 API 请求失败：${toolsResponse.status} ${toolsResponse.statusText} - ${errorText}` };
+                    logger.error(`工具 API 请求失败：${toolsResponse.status} ${toolsResponse.statusText} - ${toolsResult.errorText}`);
+                    return { error: `工具 API 请求失败：${toolsResponse.status} ${toolsResponse.statusText} - ${toolsResult.errorText}` };
                 }
             } catch (toolsFetchError) {
                 logger.error("工具 API 请求失败:", toolsFetchError);
@@ -245,16 +241,12 @@ export async function YTapi(requestData, config, toolContent, toolName) {
 
         logger.debug('最终请求体:', finalRequestData);
         try {
-            response = await fetch(url, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(finalRequestData)
-            });
+            const result = await fetchWithThinkingFallback(url, headers, finalRequestData);
+            response = result.response;
 
             if (!response.ok) {
-                const errorText = await response.text().catch(() => '无法读取错误内容');
-                logger.error(`API 请求失败：${response.status} ${response.statusText} - ${errorText}`);
-                return { error: `API 请求失败：${response.status} ${response.statusText} - ${errorText}` };
+                logger.error(`API 请求失败：${response.status} ${response.statusText} - ${result.errorText}`);
+                return { error: `API 请求失败：${response.status} ${response.statusText} - ${result.errorText}` };
             }
         } catch (fetchError) {
             logger.error(`${provider || 'API'} 请求失败:`, fetchError);
@@ -383,7 +375,7 @@ function summarizeToolResultForChat(toolName, content = '') {
 function convertToAnthropicFormat(requestData, originalRequestData) {
     const anthropicRequest = {
         model: requestData.model,
-        max_tokens: 8192,
+        max_tokens: 16000,
         messages: []
     }
 
@@ -507,7 +499,47 @@ function convertToAnthropicFormat(requestData, originalRequestData) {
         user_id: `user_${'0'.repeat(64)}_account__session_00000000-0000-4000-8000-000000000000`
     }
 
+    // 默认开启自适应思考；effort 不显式设置，走模型默认（Opus 4.8 默认 high）
+    // 不支持 thinking 的模型/中转会在请求失败时由 fetchWithThinkingFallback 自动去掉该字段重试，不报错
+    anthropicRequest.thinking = { type: 'adaptive' }
+
     return anthropicRequest
+}
+
+/**
+ * 发送 JSON 请求；若请求体带 thinking 且因模型不支持而失败，则去掉 thinking 后重试一次
+ * 对不带 thinking 的请求（如 OpenAI 格式）原样透传，行为不变
+ * @param {string} url - 请求地址
+ * @param {Object} headers - 请求头
+ * @param {Object} requestData - 请求体对象
+ * @returns {Promise<{response: Response, errorText: string|null}>} errorText 仅在最终响应失败时填充
+ */
+async function fetchWithThinkingFallback(url, headers, requestData) {
+    const send = (body) => fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+    })
+
+    const response = await send(requestData)
+    if (response.ok || !requestData?.thinking) {
+        return { response, errorText: response.ok ? null : await response.text().catch(() => '无法读取错误内容') }
+    }
+
+    // 失败且带了 thinking：判断是否因模型不支持 thinking
+    const errorText = await response.text().catch(() => '无法读取错误内容')
+    if (!/thinking/i.test(errorText)) {
+        return { response, errorText }
+    }
+
+    logger.warn('[Anthropic] 模型疑似不支持 thinking，去掉该字段后重试')
+    const withoutThinking = { ...requestData }
+    delete withoutThinking.thinking
+    const retryResponse = await send(withoutThinking)
+    return {
+        response: retryResponse,
+        errorText: retryResponse.ok ? null : await retryResponse.text().catch(() => '无法读取错误内容')
+    }
 }
 
 /**
