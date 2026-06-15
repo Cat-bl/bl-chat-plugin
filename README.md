@@ -875,7 +875,7 @@ chatApiModel: "claude-3-5-sonnet-20241022"
 chatApiKey: "sk-ant-xxxxx"
 ```
 
-> **说明**：插件会根据 URL 自动识别 API 格式。如果 URL 包含 `/v1/messages`，自动切换为 Anthropic 格式（`max_tokens` 固定为 8192）；否则使用 OpenAI 格式。
+> **说明**：插件会根据 URL 自动识别 API 格式。如果 URL 包含 `/v1/messages`，自动切换为 Anthropic 格式（`max_tokens` 为 16000，并默认开启自适应思考 `thinking: adaptive`；模型不支持思考时会自动去掉该参数重试，不影响使用）；否则使用 OpenAI 格式。
 
 ### 图像编辑模型配置 (`imageEditAiConfig`)
 ```yaml
