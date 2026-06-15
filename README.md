@@ -842,18 +842,40 @@ trackAiApikey: "sk-xxxxx"
 > 此模型在 `strict` 模式下用作"是否在跟机器人对话"的批量判官；在 `smart` 模式下用作 Timing Gate 子代理（输出 continue/no_action/wait 三选一）。两种用途都只输出极少 token，推荐用 gpt-4o-mini / gemini-2.0-flash / claude haiku 等小模型。
 
 ### 工具调用模型配置 (`toolsAiConfig`)
+
+**OpenAI 兼容格式**：
 ```yaml
 toolsAiUrl: "https://api.openai.com/v1/chat/completions"
 toolsAiModel: "gemini-2.5-flash"
 toolsAiApikey: "sk-xxxxx"
 ```
 
+**Anthropic 格式**（自动识别）：
+```yaml
+toolsAiUrl: "https://api.anthropic.com/v1/messages"
+toolsAiModel: "claude-3-5-sonnet-20241022"
+toolsAiApikey: "sk-ant-xxxxx"
+```
+
+> **说明**：插件会根据 URL 自动识别 API 格式。如果 URL 包含 `/v1/messages`，自动切换为 Anthropic 格式；否则使用 OpenAI 格式。用户只需修改 URL 和模型名，无需额外配置。
+
 ### 对话模型配置 (`chatAiConfig`)
+
+**OpenAI 兼容格式**：
 ```yaml
 chatApiUrl: "https://api.openai.com/v1/chat/completions"
 chatApiModel: "gemini-2.5-pro"
 chatApiKey: "sk-xxxxx"
 ```
+
+**Anthropic 格式**（自动识别）：
+```yaml
+chatApiUrl: "https://api.anthropic.com/v1/messages"
+chatApiModel: "claude-3-5-sonnet-20241022"
+chatApiKey: "sk-ant-xxxxx"
+```
+
+> **说明**：插件会根据 URL 自动识别 API 格式。如果 URL 包含 `/v1/messages`，自动切换为 Anthropic 格式（`max_tokens` 固定为 8192）；否则使用 OpenAI 格式。
 
 ### 图像编辑模型配置 (`imageEditAiConfig`)
 ```yaml

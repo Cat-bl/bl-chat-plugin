@@ -1,6 +1,18 @@
 import { dependencies } from "../dependence/dependencies.js";
 import { removeToolPromptsFromMessages } from "../utils/textUtils.js"
 const { _path, fetch, fs, path } = dependencies;
+
+/**
+ * 检测 API 格式
+ * @param {string} url - API 端点 URL
+ * @returns {'anthropic'|'openai'} API 格式类型
+ */
+function detectApiFormat(url) {
+    if (!url || typeof url !== 'string') return 'openai'
+    if (url.toLowerCase().includes('/v1/messages')) return 'anthropic'
+    return 'openai' // 默认 OpenAI 格式
+}
+
 /**
  * 发送请求到 OpenAI API 或其他提供者并处理响应
  * @param {Object} requestData - 请求体数据
@@ -14,64 +26,107 @@ export async function YTapi(requestData, config, toolContent, toolName) {
         let url, headers, finalRequestData;
 
         if (config.useTools) {
-            // useTools 开启，先调用 OpenAI API
-            const openaiUrl = `${config.toolsAiConfig.toolsAiUrl}`;
-            // 确保使用OpenAiModel的模型
-            if (!config.toolsAiConfig.toolsAiApikey) return { error: "OpenAI Token 未配置" };
+            // useTools 开启，先调用工具 API
+            const toolsUrl = `${config.toolsAiConfig.toolsAiUrl}`;
+            // 确保配置了 API key
+            if (!config.toolsAiConfig.toolsAiApikey) return { error: "工具 AI Token 未配置" };
 
-            const openaiHeaders = {
+            const toolsApiFormat = detectApiFormat(toolsUrl)
+            const toolsHeaders = {
                 'Authorization': `Bearer ${config.toolsAiConfig.toolsAiApikey}`,
                 'Content-Type': 'application/json'
             };
 
-            let openaiResponse;
+            if (toolsApiFormat === 'anthropic') {
+                toolsHeaders['anthropic-version'] = '2023-06-01'
+            }
+
+            let toolsResponse;
             try {
-                // 使用config.OpenAiModel替换请求中的模型
-                const openaiRequestData = {
+                // 保留原始请求中的 tools 字段
+                let toolsRequestData = {
                     ...requestData,
                     model: config.toolsAiConfig.toolsAiModel,
                     stream: false
                 };
-                // logger.error(config.toolsAiConfig.toolsAiApikey, config.toolsAiConfig.toolsAiModel, JSON.stringify(openaiRequestData))
-                // logger.error('已触发全局AI对话', config.toolsAiConfig.toolsAiApikey, config.toolsAiConfig.toolsAiModel)
-                openaiResponse = await fetch(openaiUrl, {
+
+                // 根据格式转换请求
+                if (toolsApiFormat === 'anthropic') {
+                    try {
+                        toolsRequestData = convertToAnthropicFormat(toolsRequestData, requestData)
+                    } catch (convertError) {
+                        logger.error('[Anthropic] 请求格式转换失败:', convertError)
+                        return { error: `请求格式转换失败：${convertError.message}` }
+                    }
+                }
+
+                toolsResponse = await fetch(toolsUrl, {
                     method: 'POST',
-                    headers: openaiHeaders,
-                    body: JSON.stringify(openaiRequestData)
+                    headers: toolsHeaders,
+                    body: JSON.stringify(toolsRequestData)
                 });
 
-                if (!openaiResponse.ok) {
-                    const errorText = await openaiResponse.text().catch(() => '无法读取错误内容');
-                    logger.error(`OpenAI API 请求失败：${openaiResponse.status} ${openaiResponse.statusText} - ${errorText}`);
-                    return { error: `OpenAI API 请求失败：${openaiResponse.status} ${openaiResponse.statusText} - ${errorText}` };
+                if (!toolsResponse.ok) {
+                    const errorText = await toolsResponse.text().catch(() => '无法读取错误内容');
+                    logger.error(`工具 API 请求失败：${toolsResponse.status} ${toolsResponse.statusText} - ${errorText}`);
+                    return { error: `工具 API 请求失败：${toolsResponse.status} ${toolsResponse.statusText} - ${errorText}` };
                 }
-            } catch (openaiFetchError) {
-                logger.error("OpenAI API 请求失败:", openaiFetchError);
-                return { error: `OpenAI API 请求失败：${openaiFetchError.message}` };
+            } catch (toolsFetchError) {
+                logger.error("工具 API 请求失败:", toolsFetchError);
+                return { error: `工具 API 请求失败：${toolsFetchError.message}` };
             }
 
-            let openaiData;
+            let toolsData;
             try {
-                openaiData = await openaiResponse.json();
-                logger.debug('OpenAI 响应:', JSON.stringify(openaiData, null, 2));
-            } catch (openaiJsonError) {
-                console.error("解析 OpenAI 响应 JSON 失败:", openaiJsonError);
-                return { error: `解析 OpenAI 响应 JSON 失败：${openaiJsonError.message}` };
+                toolsData = await toolsResponse.json();
+                logger.debug('工具 API 响应:', JSON.stringify(toolsData, null, 2));
+            } catch (toolsJsonError) {
+                logger.error("解析工具 API 响应 JSON 失败:", toolsJsonError);
+                return { error: `解析工具 API 响应 JSON 失败：${toolsJsonError.message}` };
             }
 
-            // 检查是否包含 tool_calls，无论 finish_reason 是什么
-            const hasToolCalls = openaiData?.choices?.[0]?.message?.tool_calls?.length > 0;
-            if (hasToolCalls) {
-                // 直接返回 tool_calls 响应，保持 OpenAI 模型
-                return processResponse(openaiData);
+            // 转换 Anthropic 响应为 OpenAI 格式
+            if (toolsApiFormat === 'anthropic') {
+                try {
+                    toolsData = convertFromAnthropicFormat(toolsData)
+                } catch (convertError) {
+                    logger.error('[Anthropic] 响应格式转换失败:', convertError)
+                    return { error: `响应格式转换失败：${convertError.message}` }
+                }
+            }
+
+            // 验证转换后的格式
+            if (toolsData && !toolsData.choices?.[0]?.message) {
+                logger.warn('[API] 工具 API 响应格式转换后无效，降级到 OneAPI')
+                // 继续执行降级逻辑，不返回错误
+            } else {
+                // 检查是否包含 tool_calls，无论 finish_reason 是什么
+                const hasToolCalls = toolsData?.choices?.[0]?.message?.tool_calls?.length > 0;
+                if (hasToolCalls) {
+                    // 直接返回 tool_calls 响应
+                    return processResponse(toolsData);
+                }
             }
 
             // 检查 OneAPI 配置
             if (!config.chatAiConfig.chatApiUrl || !config.chatAiConfig.chatApiModel || !config.chatAiConfig.chatApiKey?.length) {
                 return { error: "OneAPI URL、模型或 API Key 未配置" };
             }
-            url = config.chatAiConfig.chatApiUrl.endsWith('completions') ? config.chatAiConfig.chatApiUrl : `${config.chatAiConfig.chatApiUrl}/v1/chat/completions`;
-            const oneApiKey = config.chatAiConfig.chatApiKey;
+
+            // 智能 URL 处理：Anthropic 格式直接使用，OpenAI 格式自动拼接端点
+            const chatApiFormat = detectApiFormat(config.chatAiConfig.chatApiUrl);
+            if (chatApiFormat === 'anthropic') {
+                url = config.chatAiConfig.chatApiUrl;
+            } else {
+                // OpenAI 格式：如果 URL 不包含完整端点，自动拼接
+                url = config.chatAiConfig.chatApiUrl.includes('/v1/chat/completions')
+                    ? config.chatAiConfig.chatApiUrl
+                    : `${config.chatAiConfig.chatApiUrl.replace(/\/$/, '')}/v1/chat/completions`;
+            }
+
+            const oneApiKey = Array.isArray(config.chatAiConfig.chatApiKey)
+                ? config.chatAiConfig.chatApiKey[Math.floor(Math.random() * config.chatAiConfig.chatApiKey.length)]
+                : config.chatAiConfig.chatApiKey;
             headers = {
                 'Authorization': `Bearer ${oneApiKey}`,
                 'Content-Type': 'application/json'
@@ -108,7 +163,18 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             if (!config.chatAiConfig.chatApiUrl || !config.chatAiConfig.chatApiModel || !config.chatAiConfig.chatApiKey?.length) {
                 return { error: "OneAPI URL、模型或 API Key 未配置" };
             }
-            url = config.chatAiConfig.chatApiUrl.endsWith('completions') ? config.chatAiConfig.chatApiUrl : `${config.chatAiConfig.chatApiUrl}/v1/chat/completions`;
+
+            // 智能 URL 处理：Anthropic 格式直接使用，OpenAI 格式自动拼接端点
+            const chatApiFormat = detectApiFormat(config.chatAiConfig.chatApiUrl);
+            if (chatApiFormat === 'anthropic') {
+                url = config.chatAiConfig.chatApiUrl;
+            } else {
+                // OpenAI 格式：如果 URL 不包含完整端点，自动拼接
+                url = config.chatAiConfig.chatApiUrl.includes('/v1/chat/completions')
+                    ? config.chatAiConfig.chatApiUrl
+                    : `${config.chatAiConfig.chatApiUrl.replace(/\/$/, '')}/v1/chat/completions`;
+            }
+
             const oneApiKey = config.chatAiConfig.chatApiKey[Math.floor(Math.random() * config.chatAiConfig.chatApiKey.length)];
             headers = {
                 'Authorization': `Bearer ${oneApiKey}`,
@@ -127,14 +193,31 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             return { error: "缺少必要的请求参数（URL、headers 或请求体）" };
         }
 
+        const apiFormat = detectApiFormat(url)
         let response;
-        if (url.includes('v1/chat/completions') && typeof finalRequestData === 'object' && finalRequestData !== null) {
-            delete finalRequestData.tools;
-            delete finalRequestData.tool_choice;
+
+        // 根据 API 格式处理请求体
+        if (apiFormat === 'openai') {
+            if (url.includes('v1/chat/completions') && typeof finalRequestData === 'object' && finalRequestData !== null) {
+                delete finalRequestData.tools;
+                delete finalRequestData.tool_choice;
+            }
+            finalRequestData.messages = moveFinalToolPromptToEnd(
+                removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages)
+            )
+        } else if (apiFormat === 'anthropic') {
+            // Anthropic 格式转换
+            // 注意：对话 API 不传递 tools，避免模型参与工具调用判断
+            try {
+                // 第二个参数传 finalRequestData（不含 tools），而不是 requestData
+                finalRequestData = convertToAnthropicFormat(finalRequestData, finalRequestData)
+            } catch (convertError) {
+                logger.error('[Anthropic] 请求格式转换失败:', convertError)
+                return { error: `请求格式转换失败：${convertError.message}` }
+            }
+            headers['anthropic-version'] = '2023-06-01'
         }
-        finalRequestData.messages = moveFinalToolPromptToEnd(
-            removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages)
-        )
+
         logger.debug('最终请求体:', finalRequestData);
         try {
             response = await fetch(url, {
@@ -149,22 +232,39 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                 return { error: `API 请求失败：${response.status} ${response.statusText} - ${errorText}` };
             }
         } catch (fetchError) {
-            console.error(`${provider || 'API'} 请求失败:`, fetchError);
+            logger.error(`${provider || 'API'} 请求失败:`, fetchError);
             return { error: `${provider || 'API'} 请求失败：${fetchError.message}` };
         }
 
         let responseData;
         try {
             responseData = await response.json();
-            console.log(`${provider || 'API'} 响应:`, JSON.stringify(responseData, null, 2));
+            logger.debug(`${provider || 'API'} 响应:`, JSON.stringify(responseData, null, 2));
         } catch (jsonError) {
-            console.error(`解析 ${provider || 'API'} 响应 JSON 失败:`, jsonError);
+            logger.error(`解析 ${provider || 'API'} 响应 JSON 失败:`, jsonError);
             return { error: `解析 ${provider || 'API'} 响应 JSON 失败：${jsonError.message}` };
         }
+
+        // 根据 API 格式转换响应
+        if (apiFormat === 'anthropic') {
+            try {
+                responseData = convertFromAnthropicFormat(responseData)
+            } catch (convertError) {
+                logger.error('[Anthropic] 响应格式转换失败:', convertError)
+                return { error: `响应格式转换失败：${convertError.message}` }
+            }
+
+            // 验证转换后的格式完整性
+            if (!responseData?.choices?.[0]?.message) {
+                logger.error('[Anthropic] 响应转换后格式无效:', responseData)
+                return { error: 'API 响应转换失败，格式不完整' }
+            }
+        }
+
         return processResponse(responseData);
 
     } catch (error) {
-        console.error('YTapi 异常:', error);
+        logger.error('YTapi 异常:', error);
         return { error: `发生异常：${error.message}` };
     }
 }
@@ -248,6 +348,193 @@ function summarizeToolResultForChat(toolName, content = '') {
     const text = String(content || '');
     return `content: ${text}`;
 }
+
+/**
+ * 将请求数据转换为 Anthropic 格式
+ * @param {Object} requestData - OpenAI 格式请求数据
+ * @param {Object} originalRequestData - 原始请求数据（可能包含 tools）
+ * @returns {Object} Anthropic 格式请求数据
+ */
+function convertToAnthropicFormat(requestData, originalRequestData) {
+    const anthropicRequest = {
+        model: requestData.model,
+        max_tokens: 8192,
+        messages: []
+    }
+
+    // 提取系统消息
+    const systemMessages = requestData.messages.filter(m => m.role === 'system')
+    if (systemMessages.length > 0) {
+        const systemContent = systemMessages.map(m => m.content || '').filter(Boolean).join('\n\n')
+        if (systemContent) {
+            anthropicRequest.system = systemContent
+        }
+    }
+
+    // 转换非系统消息
+    const nonSystemMessages = requestData.messages.filter(m => m.role !== 'system')
+
+    // Anthropic 要求消息交替且首条必须是 user
+    const normalizedMessages = []
+    let lastRole = null
+
+    for (const msg of nonSystemMessages) {
+        let convertedMsg = null
+
+        if (msg.role === 'assistant' && msg.tool_calls?.length) {
+            // OpenAI tool_calls -> Anthropic tool_use
+            const content = []
+            if (msg.content && String(msg.content).trim()) {
+                content.push({ type: 'text', text: msg.content })
+            }
+            for (const toolCall of msg.tool_calls) {
+                try {
+                    content.push({
+                        type: 'tool_use',
+                        id: toolCall.id,
+                        name: toolCall.function.name,
+                        input: JSON.parse(toolCall.function.arguments || '{}')
+                    })
+                } catch (parseError) {
+                    logger.warn(`[Anthropic] 解析 tool_call arguments 失败: ${parseError.message}`)
+                    content.push({
+                        type: 'tool_use',
+                        id: toolCall.id,
+                        name: toolCall.function.name,
+                        input: {}
+                    })
+                }
+            }
+            if (content.length === 0) {
+                content.push({ type: 'text', text: '正在调用工具...' })
+            }
+            convertedMsg = {
+                role: 'assistant',
+                content
+            }
+        } else if (msg.role === 'tool') {
+            // OpenAI tool -> Anthropic tool_result (归类为 user 角色)
+            convertedMsg = {
+                role: 'user',
+                content: [{
+                    type: 'tool_result',
+                    tool_use_id: msg.tool_call_id,
+                    content: String(msg.content || '')
+                }]
+            }
+        } else {
+            // 普通消息
+            convertedMsg = {
+                role: msg.role,
+                content: String(msg.content || '')
+            }
+        }
+
+        // 合并连续相同角色的消息
+        if (convertedMsg.role === lastRole && normalizedMessages.length > 0) {
+            const lastMsg = normalizedMessages[normalizedMessages.length - 1]
+
+            // 合并 content
+            if (Array.isArray(lastMsg.content) && Array.isArray(convertedMsg.content)) {
+                lastMsg.content.push(...convertedMsg.content)
+            } else if (Array.isArray(lastMsg.content)) {
+                lastMsg.content.push({ type: 'text', text: String(convertedMsg.content) })
+            } else if (Array.isArray(convertedMsg.content)) {
+                lastMsg.content = [{ type: 'text', text: String(lastMsg.content) }, ...convertedMsg.content]
+            } else {
+                lastMsg.content = String(lastMsg.content) + '\n' + String(convertedMsg.content)
+            }
+        } else {
+            normalizedMessages.push(convertedMsg)
+            lastRole = convertedMsg.role
+        }
+    }
+
+    // 确保首条消息是 user
+    if (normalizedMessages.length > 0 && normalizedMessages[0].role !== 'user') {
+        normalizedMessages.unshift({
+            role: 'user',
+            content: '继续'
+        })
+    }
+
+    // 验证消息数组不为空
+    if (normalizedMessages.length === 0) {
+        throw new Error('转换后的消息数组为空，至少需要一条消息')
+    }
+
+    anthropicRequest.messages = normalizedMessages
+
+    // 转换工具定义
+    if (originalRequestData.tools?.length) {
+        anthropicRequest.tools = originalRequestData.tools.map(tool => ({
+            name: tool.function.name,
+            description: tool.function.description || '',
+            input_schema: tool.function.parameters || { type: 'object', properties: {} }
+        }))
+    }
+
+    return anthropicRequest
+}
+
+/**
+ * 将 Anthropic 响应转换为 OpenAI 格式
+ * @param {Object} anthropicResponse - Anthropic 格式响应
+ * @returns {Object} OpenAI 格式响应
+ */
+function convertFromAnthropicFormat(anthropicResponse) {
+    // 错误响应直接返回
+    if (anthropicResponse.error) {
+        return anthropicResponse
+    }
+
+    const openaiResponse = {
+        choices: [{
+            message: {
+                role: 'assistant',
+                content: ''
+            },
+            finish_reason: anthropicResponse.stop_reason || 'stop'
+        }],
+        usage: anthropicResponse.usage
+    }
+
+    // 处理 content 数组
+    if (Array.isArray(anthropicResponse.content)) {
+        const textParts = []
+        const toolUses = []
+
+        for (const block of anthropicResponse.content) {
+            if (block.type === 'text') {
+                textParts.push(block.text || '')
+            } else if (block.type === 'tool_use') {
+                toolUses.push({
+                    id: block.id,
+                    type: 'function',
+                    function: {
+                        name: block.name,
+                        arguments: JSON.stringify(block.input || {})
+                    }
+                })
+            }
+        }
+
+        openaiResponse.choices[0].message.content = textParts.join('\n')
+
+        // 只在有工具调用时才添加 tool_calls 字段
+        if (toolUses.length > 0) {
+            openaiResponse.choices[0].message.tool_calls = toolUses
+        }
+    } else if (typeof anthropicResponse.content === 'string') {
+        openaiResponse.choices[0].message.content = anthropicResponse.content
+    } else if (!anthropicResponse.content) {
+        // content 为 null/undefined，保持空字符串
+        openaiResponse.choices[0].message.content = ''
+    }
+
+    return openaiResponse
+}
+
 function processResponse(responseData) {
     // 处理数组响应（兼容某些 API 返回数组的情况）
     if (Array.isArray(responseData) && responseData.length > 0) {
