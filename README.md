@@ -1096,7 +1096,3 @@ embeddingApiKey: "sk-xxxxx"
 1. 工具调用想被动一些的话可以使用 gemini-2.5-flash，如果想主动一些例如主动发语音、主动贴表情等，可以使用gemini-3-flash-preview
 2. 对话模型实际测试下来还是gemini-2.5-pro综合性更好
 3. 对话追踪判断可以使用响应快并不需要思考的简单模型，例如gemini-2.0，gpt-4o-mini等
-
-# 开发
-
-参与开发请看 [CONTRIBUTING.md](CONTRIBUTING.md)（提交前执行 `pnpm lint` 和 `pnpm test`）。
