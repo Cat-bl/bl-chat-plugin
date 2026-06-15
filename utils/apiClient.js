@@ -214,6 +214,10 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             // Anthropic 格式转换
             // 注意：对话 API 不传递 tools，避免模型参与工具调用判断
             try {
+                // 与 OpenAI 路径保持一致：先清洗 system 里的工具提示词、把最终工具提示移到末尾，再转换格式
+                finalRequestData.messages = moveFinalToolPromptToEnd(
+                    removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages)
+                )
                 // 第二个参数传 finalRequestData（不含 tools），而不是 requestData
                 finalRequestData = convertToAnthropicFormat(finalRequestData, finalRequestData)
             } catch (convertError) {
