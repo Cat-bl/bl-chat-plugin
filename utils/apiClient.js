@@ -13,8 +13,8 @@ function generateDynamicVersions() {
 
     return {
         anthropicVersion: `${year}-${month}-01`, // 格式: 2026-06-01
-        // Claude CLI 真实 User-Agent 格式：claude-cli/版本号 (external, cli)
-        userAgent: 'claude-cli/2.1.177 (external, cli)'
+        // 伪装成浏览器，避免中转站拒绝 CLI 客户端
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
     };
 }
 
@@ -56,7 +56,8 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             if (toolsApiFormat === 'anthropic') {
                 const versions = generateDynamicVersions();
                 toolsHeaders['anthropic-version'] = versions.anthropicVersion;
-                // 不发送 User-Agent，避免中转站检测客户端类型
+                // 必须显式设置 User-Agent，否则 node-fetch 会使用默认值被中转站检测到
+                toolsHeaders['User-Agent'] = versions.userAgent;
             }
 
             let toolsResponse;
@@ -235,7 +236,8 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             }
             const versions = generateDynamicVersions();
             headers['anthropic-version'] = versions.anthropicVersion;
-            // 不发送 User-Agent，避免中转站检测客户端类型
+            // 必须显式设置 User-Agent，否则 node-fetch 会使用默认值被中转站检测到
+            headers['User-Agent'] = versions.userAgent;
         }
 
         logger.debug('最终请求体:', finalRequestData);
