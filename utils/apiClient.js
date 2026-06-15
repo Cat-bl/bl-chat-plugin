@@ -178,27 +178,6 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                 'Content-Type': 'application/json'
             };
 
-            // 处理消息，过滤并转换 tool_calls 相关内容
-            const processedMessages = requestData.messages
-                .map(msg => {
-                    if (msg.role === 'assistant' && msg.tool_calls?.length) {
-                        //return null; // 跳过含 tool_calls 的 assistant 消息
-                        const prefix = `你需要使用 ${toolName} 来处理用户的需求\n`;
-                        return {
-                            role: 'assistant',
-                            content: '[系统反馈信息]: ' + prefix + msg.tool_calls[0].function.arguments
-                        };
-                    } else if (msg.role === 'tool') {
-                        const prefix = `使用 ${toolName} 处理完成了，这是调用的结果：\n`;
-                        return {
-                            role: 'user',
-                            content: '[系统反馈信息]: ' + prefix + msg.content
-                        };
-                    }
-                    return msg;
-                })
-                .filter(Boolean);
-
             finalRequestData = {
                 model: config.chatAiConfig.chatApiModel,
                 messages: convertToolMessagesForChat(requestData.messages, toolName),
