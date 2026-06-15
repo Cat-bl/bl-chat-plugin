@@ -13,7 +13,8 @@ function generateDynamicVersions() {
 
     return {
         anthropicVersion: `${year}-${month}-01`, // 格式: 2026-06-01
-        clientVersion: `2.1.177` // Claude Code 最新版本（2026年6月15日）
+        // Claude CLI 真实 User-Agent 格式：claude-cli/版本号 (external, cli)
+        userAgent: 'claude-cli/2.1.177 (external, cli)'
     };
 }
 
@@ -55,9 +56,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             if (toolsApiFormat === 'anthropic') {
                 const versions = generateDynamicVersions();
                 toolsHeaders['anthropic-version'] = versions.anthropicVersion;
-                toolsHeaders['User-Agent'] = `claude-code/${versions.clientVersion}`;
-                toolsHeaders['anthropic-client'] = 'claude-code';
-                toolsHeaders['anthropic-client-version'] = versions.clientVersion;
+                toolsHeaders['User-Agent'] = versions.userAgent;
             }
 
             let toolsResponse;
@@ -236,9 +235,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             }
             const versions = generateDynamicVersions();
             headers['anthropic-version'] = versions.anthropicVersion;
-            headers['User-Agent'] = `claude-code/${versions.clientVersion}`;
-            headers['anthropic-client'] = 'claude-code';
-            headers['anthropic-client-version'] = versions.clientVersion;
+            headers['User-Agent'] = versions.userAgent;
         }
 
         logger.debug('最终请求体:', finalRequestData);
