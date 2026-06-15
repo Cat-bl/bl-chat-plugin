@@ -56,7 +56,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             if (toolsApiFormat === 'anthropic') {
                 const versions = generateDynamicVersions();
                 toolsHeaders['anthropic-version'] = versions.anthropicVersion;
-                toolsHeaders['User-Agent'] = versions.userAgent;
+                // 不发送 User-Agent，避免中转站检测客户端类型
             }
 
             let toolsResponse;
@@ -235,7 +235,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             }
             const versions = generateDynamicVersions();
             headers['anthropic-version'] = versions.anthropicVersion;
-            headers['User-Agent'] = versions.userAgent;
+            // 不发送 User-Agent，避免中转站检测客户端类型
         }
 
         logger.debug('最终请求体:', finalRequestData);
