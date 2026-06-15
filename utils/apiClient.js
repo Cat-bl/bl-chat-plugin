@@ -3,6 +3,21 @@ import { removeToolPromptsFromMessages } from "../utils/textUtils.js"
 const { _path, fetch, fs, path } = dependencies;
 
 /**
+ * 生成动态的客户端版本标识（基于当前日期）
+ * @returns {Object} 包含 anthropicVersion 和 clientVersion 的对象
+ */
+function generateDynamicVersions() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+
+    return {
+        anthropicVersion: `${year}-${month}-01`, // 格式: 2026-06-01
+        clientVersion: `2.1.177` // Claude Code 最新版本（2026年6月15日）
+    };
+}
+
+/**
  * 检测 API 格式
  * @param {string} url - API 端点 URL
  * @returns {'anthropic'|'openai'} API 格式类型
@@ -38,7 +53,11 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             };
 
             if (toolsApiFormat === 'anthropic') {
-                toolsHeaders['anthropic-version'] = '2023-06-01'
+                const versions = generateDynamicVersions();
+                toolsHeaders['anthropic-version'] = versions.anthropicVersion;
+                toolsHeaders['User-Agent'] = `claude-code/${versions.clientVersion}`;
+                toolsHeaders['anthropic-client'] = 'claude-code';
+                toolsHeaders['anthropic-client-version'] = versions.clientVersion;
             }
 
             let toolsResponse;
@@ -215,7 +234,11 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                 logger.error('[Anthropic] 请求格式转换失败:', convertError)
                 return { error: `请求格式转换失败：${convertError.message}` }
             }
-            headers['anthropic-version'] = '2023-06-01'
+            const versions = generateDynamicVersions();
+            headers['anthropic-version'] = versions.anthropicVersion;
+            headers['User-Agent'] = `claude-code/${versions.clientVersion}`;
+            headers['anthropic-client'] = 'claude-code';
+            headers['anthropic-client-version'] = versions.clientVersion;
         }
 
         logger.debug('最终请求体:', finalRequestData);
