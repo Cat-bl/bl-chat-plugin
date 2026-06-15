@@ -29,6 +29,36 @@ function detectApiFormat(url) {
     return 'openai' // 默认 OpenAI 格式
 }
 
+// 伪装成官方 Claude Code CLI 所需的常量
+// 身份串必须逐字一致：Anthropic 对订阅(OAuth) token 会校验它，多数 Claude Code 中转也按此识别请求来源
+const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+const CLAUDE_CLI_VERSION = '2.1.177'
+
+/**
+ * 给 Anthropic 请求头补上官方 Claude Code CLI 的指纹（对齐 claude-cli 2.1.x 实际抓包的请求头）
+ * 注意：
+ * - 若用订阅(OAuth) token 直连官方，需在 anthropic-beta 里再加 oauth-2025-04-20
+ * - 部分中转/网关(如 Bedrock/Vertex)会拒绝未知 beta flag；若报 "invalid beta flag"，
+ *   优先删 tmp-preserve-thinking-2025-10-01、fine-grained-tool-streaming-2025-05-14(已 GA)
+ * - x-stainless-package-version 取 @anthropic-ai/sdk 较新版本，中转一般不校验其精确值
+ * @param {Object} headers - 待补充的请求头对象
+ * @returns {Object} 同一个对象（便于链式调用）
+ */
+function applyClaudeCodeHeaders(headers) {
+    headers['anthropic-version'] = '2023-06-01'
+    headers['anthropic-beta'] = 'claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,tmp-preserve-thinking-2025-10-01'
+    headers['user-agent'] = `claude-cli/${CLAUDE_CLI_VERSION} (external, cli)`
+    headers['x-app'] = 'cli'
+    headers['x-stainless-lang'] = 'js'
+    headers['x-stainless-package-version'] = '0.104.1'
+    headers['x-stainless-runtime'] = 'node'
+    headers['x-stainless-runtime-version'] = 'v22.20.0'
+    headers['x-stainless-os'] = 'Linux'
+    headers['x-stainless-arch'] = 'x64'
+    headers['x-stainless-retry-count'] = '0'
+    return headers
+}
+
 /**
  * 发送请求到 OpenAI API 或其他提供者并处理响应
  * @param {Object} requestData - 请求体数据
@@ -54,10 +84,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             };
 
             if (toolsApiFormat === 'anthropic') {
-                const versions = generateDynamicVersions();
-                toolsHeaders['anthropic-version'] = versions.anthropicVersion;
-                // 必须显式设置 User-Agent，否则 node-fetch 会使用默认值被中转站检测到
-                toolsHeaders['User-Agent'] = versions.userAgent;
+                applyClaudeCodeHeaders(toolsHeaders)
             }
 
             let toolsResponse;
@@ -234,10 +261,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                 logger.error('[Anthropic] 请求格式转换失败:', convertError)
                 return { error: `请求格式转换失败：${convertError.message}` }
             }
-            const versions = generateDynamicVersions();
-            headers['anthropic-version'] = versions.anthropicVersion;
-            // 必须显式设置 User-Agent，否则 node-fetch 会使用默认值被中转站检测到
-            headers['User-Agent'] = versions.userAgent;
+            applyClaudeCodeHeaders(headers)
         }
 
         logger.debug('最终请求体:', finalRequestData);
@@ -384,14 +408,17 @@ function convertToAnthropicFormat(requestData, originalRequestData) {
         messages: []
     }
 
-    // 提取系统消息
+    // 提取系统消息，并伪装成官方 Claude Code CLI：
+    // system 必须是数组，且首块逐字为身份串（带 cache_control），原本的系统提示词追加在其后
+    const systemBlocks = [
+        { type: 'text', text: CLAUDE_CODE_IDENTITY, cache_control: { type: 'ephemeral' } }
+    ]
     const systemMessages = requestData.messages.filter(m => m.role === 'system')
-    if (systemMessages.length > 0) {
-        const systemContent = systemMessages.map(m => m.content || '').filter(Boolean).join('\n\n')
-        if (systemContent) {
-            anthropicRequest.system = systemContent
-        }
+    const systemContent = systemMessages.map(m => m.content || '').filter(Boolean).join('\n\n')
+    if (systemContent) {
+        systemBlocks.push({ type: 'text', text: systemContent })
     }
+    anthropicRequest.system = systemBlocks
 
     // 转换非系统消息
     const nonSystemMessages = requestData.messages.filter(m => m.role !== 'system')
@@ -494,6 +521,11 @@ function convertToAnthropicFormat(requestData, originalRequestData) {
             description: tool.function.description || '',
             input_schema: tool.function.parameters || { type: 'object', properties: {} }
         }))
+    }
+
+    // 伪装成官方 CLI 的 metadata（user_id 值官方不会严格校验，可按需替换）
+    anthropicRequest.metadata = {
+        user_id: `user_${'0'.repeat(64)}_account__session_00000000-0000-4000-8000-000000000000`
     }
 
     return anthropicRequest

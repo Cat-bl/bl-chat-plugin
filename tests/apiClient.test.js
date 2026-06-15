@@ -8,6 +8,8 @@ function detectApiFormat(url) {
     return 'openai'
 }
 
+const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+
 function convertToAnthropicFormat(requestData, originalRequestData) {
     const anthropicRequest = {
         model: requestData.model,
@@ -15,14 +17,16 @@ function convertToAnthropicFormat(requestData, originalRequestData) {
         messages: []
     }
 
-    // 提取系统消息
+    // 提取系统消息（伪装成官方 Claude Code CLI：system 为数组，首块为身份串）
+    const systemBlocks = [
+        { type: 'text', text: CLAUDE_CODE_IDENTITY, cache_control: { type: 'ephemeral' } }
+    ]
     const systemMessages = requestData.messages.filter(m => m.role === 'system')
-    if (systemMessages.length > 0) {
-        const systemContent = systemMessages.map(m => m.content || '').filter(Boolean).join('\n\n')
-        if (systemContent) {
-            anthropicRequest.system = systemContent
-        }
+    const systemContent = systemMessages.map(m => m.content || '').filter(Boolean).join('\n\n')
+    if (systemContent) {
+        systemBlocks.push({ type: 'text', text: systemContent })
     }
+    anthropicRequest.system = systemBlocks
 
     // 转换非系统消息
     const nonSystemMessages = requestData.messages.filter(m => m.role !== 'system')
@@ -76,6 +80,10 @@ function convertToAnthropicFormat(requestData, originalRequestData) {
             description: tool.function.description || '',
             input_schema: tool.function.parameters || { type: 'object', properties: {} }
         }))
+    }
+
+    anthropicRequest.metadata = {
+        user_id: `user_${'0'.repeat(64)}_account__session_00000000-0000-4000-8000-000000000000`
     }
 
     return anthropicRequest
@@ -156,7 +164,9 @@ describe('Anthropic 请求格式转换', () => {
             ]
         };
         const result = convertToAnthropicFormat(request, request);
-        assert.strictEqual(result.system, '你是助手');
+        assert.strictEqual(Array.isArray(result.system), true);
+        assert.strictEqual(result.system[0].text, "You are Claude Code, Anthropic's official CLI for Claude.");
+        assert.strictEqual(result.system[1].text, '你是助手');
         assert.strictEqual(result.messages.length, 1);
         assert.strictEqual(result.messages[0].role, 'user');
         assert.strictEqual(result.messages[0].content, '你好');
