@@ -651,8 +651,10 @@ export class ChatPlugin extends plugin {
 
         // 获取机器人在当前群的真实身份信息(群名片可能被 changeCardTool 改过)
         const botMemberInfo = await e.bot.pickGroup(groupId).getMemberMap().then(map => map.get(Bot.uin))
-        const botCardInGroup = botMemberInfo?.card || Bot.nickname || "机器人"
+        logger.debug(`[身份信息] Bot.uin=${Bot.uin}, botMemberInfo=`, JSON.stringify(botMemberInfo))
+        const botCardInGroup = (botMemberInfo?.card && botMemberInfo.card.trim()) || Bot.nickname || "机器人"
         const botRoleInGroup = roleMap[botMemberInfo?.role] || "member"
+        logger.debug(`[身份信息] 最终群名片=${botCardInGroup}, 群身份=${botRoleInGroup}`)
 
         const systemContent = `
 【认知系统初始化】
@@ -660,7 +662,8 @@ ${this.config.systemContent}
 
 【核心身份原则】
 你在本群的当前显示名称（群名片）是"${botCardInGroup}"，QQ号 ${Bot.uin}，群身份 ${botRoleInGroup}。
-当用户 @ 你或直接叫这个名称时，指的就是你。群名片可能与你的人设昵称不同，但这是你在本群的实际显示名。
+当用户 @ 你或叫你时，可能使用：完整群名片、昵称简称、谐音、叠字等变体(如"${botCardInGroup}"可能被叫成"小鬼""基基""哈基"等)。只要名称里包含你名字的关键字，大概率是在叫你。
+群名片可能与你的人设昵称不同，但这是你在本群的实际显示名。
 
 实时数据
 ${JSON.stringify({
@@ -1130,39 +1133,10 @@ ${mcpPrompts}
     const now = Math.floor(Date.now() / 1000)
 
     try {
-      // 1. 先记录工具调用结果（如果有）
-      if (session.toolResults?.length) {
-        for (let i = 0; i < session.toolResults.length; i++) {
-          const { toolCall, toolName: tName, result } = session.toolResults[i]
+      // 1. 不再记录工具结果到持久化历史(避免暴露内部格式)
+      // 工具结果只在当前轮次上下文中存在,下次加载历史时不会出现
 
-          // 严格检查 result
-          const resultStr = String(result || '').trim()
-          if (!resultStr || resultStr === 'undefined' || resultStr === 'null') {
-            logger.warn(`[工具记录] 工具 ${tName} 的结果无效，跳过`)
-            continue
-          }
-
-          const formattedResult = resultStr.length > 500
-            ? resultStr.substring(0, 500) + "...(已截断)"
-            : resultStr
-
-          const toolMessage = `此处为调用工具的结果，不计算到聊天记录中：[调用工具:${tName}] 调用结果:${formattedResult}`
-
-          logger.info(`[工具记录] 准备记录: ${toolMessage.substring(0, 100)}...`)
-
-          await this.messageManager.recordMessage({
-            message_type: e.message_type,
-            group_id: e.group_id,
-            time: now + i,
-            message: [{ type: "text", text: toolMessage }],
-            source: "tool",
-            self_id: Bot.uin,
-            sender: { user_id: Bot.uin, nickname: Bot.nickname, card: Bot.nickname, role: "member" }
-          })
-        }
-      }
-
-      // 2. 再记录 Bot 的回复
+      // 2. 记录 Bot 的最终回复
       await this.messageManager.recordMessage({
         message_type: e.message_type,
         group_id: e.group_id,
