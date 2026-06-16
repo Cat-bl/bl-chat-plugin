@@ -649,11 +649,18 @@ export class ChatPlugin extends plugin {
         const groupContext = await this.getCurrentGroupContext(e)
         const enhancedPrompts = [emotionPrompt, memoryPrompt, groupMemoryPrompt, expressionPrompt, knowledgePrompt, personProfilePrompt].filter(Boolean).join('\n')
 
+        // 获取机器人在当前群的真实身份信息(群名片可能被 changeCardTool 改过)
+        const botMemberInfo = await e.bot.pickGroup(groupId).getMemberMap().then(map => map.get(Bot.uin))
+        const botCardInGroup = botMemberInfo?.card || Bot.nickname || "机器人"
+        const botRoleInGroup = roleMap[botMemberInfo?.role] || "member"
+
         const systemContent = `
 【认知系统初始化】
 ${this.config.systemContent}
 
 【核心身份原则】
+你在本群的当前显示名称（群名片）是"${botCardInGroup}"，QQ号 ${Bot.uin}，群身份 ${botRoleInGroup}。
+当用户 @ 你或直接叫这个名称时，指的就是你。群名片可能与你的人设昵称不同，但这是你在本群的实际显示名。
 
 实时数据
 ${JSON.stringify({
@@ -772,9 +779,7 @@ ${mcpPrompts}
           if (session.tools?.length) toolChoice = { type: "function", function: { name: "grabRedBagTool" } }
         }
 
-        const botMemberMap = await e.bot.pickGroup(groupId).getMemberMap()
-        const botRole = roleMap[botMemberMap.get(Bot.uin)?.role] || "member"
-        session.toolContent = await this.buildMessageContent({ nickname: Bot.nickname, user_id: Bot.uin, role: botRole }, "", [], [], e.group)
+        session.toolContent = await this.buildMessageContent({ nickname: botCardInGroup, user_id: Bot.uin, role: botRoleInGroup }, "", [], [], e.group)
 
         const requestData = this.buildRequestData(session.groupUserMessages, session.tools, toolChoice)
         let response = await this.retryRequest(requestData, session.toolContent)
