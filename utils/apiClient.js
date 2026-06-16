@@ -95,7 +95,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                     model: config.toolsAiConfig.toolsAiModel,
                     stream: false
                 };
-                logger.error("工具调用上下文：",JSON.stringify(toolsRequestData));
+                logger.debug("工具调用上下文：",JSON.stringify(toolsRequestData));
                 // 根据格式转换请求
                 if (toolsApiFormat === 'anthropic') {
                     try {
@@ -248,7 +248,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             applyClaudeCodeHeaders(headers)
         }
 
-        logger.error('最终请求体:', finalRequestData);
+        logger.debug('最终请求体:', finalRequestData);
         try {
             const result = await fetchWithThinkingFallback(url, headers, finalRequestData);
             response = result.response;
