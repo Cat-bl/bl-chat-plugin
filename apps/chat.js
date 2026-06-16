@@ -650,10 +650,21 @@ export class ChatPlugin extends plugin {
         const enhancedPrompts = [emotionPrompt, memoryPrompt, groupMemoryPrompt, expressionPrompt, knowledgePrompt, personProfilePrompt].filter(Boolean).join('\n')
 
         // 获取机器人在当前群的真实身份信息(群名片可能被 changeCardTool 改过)
-        const botMemberInfo = await e.bot.pickGroup(groupId).getMemberMap().then(map => map.get(Bot.uin))
-        logger.debug(`[身份信息] Bot.uin=${Bot.uin}, botMemberInfo=`, JSON.stringify(botMemberInfo))
-        const botCardInGroup = (botMemberInfo?.card && botMemberInfo.card.trim()) || Bot.nickname || "机器人"
-        const botRoleInGroup = roleMap[botMemberInfo?.role] || "member"
+        let botCardInGroup = Bot.nickname || "机器人"
+        let botRoleInGroup = "member"
+
+        try {
+          const botMemberInfo = await e.group?.pickMember?.(Bot.uin)?.getInfo?.()
+          logger.debug(`[身份信息] Bot.uin=${Bot.uin}, botMemberInfo=`, JSON.stringify(botMemberInfo))
+
+          if (botMemberInfo) {
+            botCardInGroup = (botMemberInfo.card && botMemberInfo.card.trim()) || botMemberInfo.nickname || Bot.nickname || "机器人"
+            botRoleInGroup = roleMap[botMemberInfo.role] || "member"
+          }
+        } catch (err) {
+          logger.warn(`[身份信息] 获取失败, 使用降级方案: ${err.message}`)
+        }
+
         logger.debug(`[身份信息] 最终群名片=${botCardInGroup}, 群身份=${botRoleInGroup}`)
 
         const systemContent = `
