@@ -201,6 +201,11 @@ export async function YTapi(requestData, config, toolContent, toolName) {
         const apiFormat = detectApiFormat(url)
         let response;
 
+        // 判断消息里是否有工具执行记录(用于决定是否给对话模型收尾提示)
+        const hasExecutedTools = finalRequestData.messages?.some(m =>
+            m.role === 'system' && String(m.content || '').includes('[tool_execution]')
+        )
+
         // 根据 API 格式处理请求体
         if (apiFormat === 'openai') {
             if (url.includes('v1/chat/completions') && typeof finalRequestData === 'object' && finalRequestData !== null) {
@@ -208,7 +213,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                 delete finalRequestData.tool_choice;
             }
             finalRequestData.messages = moveFinalToolPromptToEnd(
-                removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages)
+                removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages, hasExecutedTools)
             )
         } else if (apiFormat === 'anthropic') {
             // Anthropic 格式转换
@@ -216,7 +221,7 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             try {
                 // 与 OpenAI 路径保持一致：先清洗 system 里的工具提示词、把最终工具提示移到末尾，再转换格式
                 finalRequestData.messages = moveFinalToolPromptToEnd(
-                    removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages)
+                    removeToolPromptsFromMessages(finalRequestData.messages || requestData.messages, hasExecutedTools)
                 )
                 // 第二个参数传 finalRequestData（不含 tools），而不是 requestData
                 finalRequestData = convertToAnthropicFormat(finalRequestData, finalRequestData)
