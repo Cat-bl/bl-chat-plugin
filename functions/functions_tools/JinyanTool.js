@@ -139,8 +139,8 @@ export class JinyanTool extends AbstractTool {
 
     const groupId = e.group_id;
 
-    // 权限检查：普通用户不能命令机器人禁言，除非机器人自主决定
-    if (!selfDecision && !['owner', 'admin'].includes(senderRole)) {
+    // 权限检查：普通用户不能命令机器人禁言，除非机器人自主决定或是主人
+    if (!selfDecision && !['owner', 'admin'].includes(senderRole) && !this.e.isMaster) {
       return '该群员不是群主或管理员，无权命令我执行禁言操作';
     }
 
