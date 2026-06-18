@@ -15,6 +15,7 @@ import { initializeSharedState, getSharedState, refreshLocalTools, applyToolRegi
 import { delay, getOrCreateGroupLimiter } from "../core/asyncUtils.js"
 import { configManagerMethods } from "../core/configManager.js"
 import { taskStatusMethods } from "../core/taskStatus.js"
+import { toolHistoryMethods } from "../core/toolHistory.js"
 import { tryAutoGrabRedBag } from "../core/redBag.js"
 import { messageBuilderMethods, roleMap } from "../core/messageBuilder.js"
 import { conversationTrackerMethods, activeConversations, trackingThrottle } from "../core/conversationTracker.js"
@@ -648,6 +649,7 @@ export class ChatPlugin extends plugin {
         // 构建增强系统提示
         const groupContext = await this.getCurrentGroupContext(e)
         const enhancedPrompts = [emotionPrompt, memoryPrompt, groupMemoryPrompt, expressionPrompt, knowledgePrompt, personProfilePrompt].filter(Boolean).join('\n')
+        const toolHistoryPrompt = await this.getToolHistoryPromptForGroup(groupId)
 
         // 获取机器人在当前群的真实身份信息(群名片可能被 changeCardTool 改过)
         let botCardInGroup = Bot.nickname || "机器人"
@@ -726,7 +728,7 @@ ${mcpPrompts}
 ✅ 正确: "中午好呀~"
 消息记录格式仅用于你理解上下文，回复时只输出纯内容！
 
-【群聊消息记录】
+${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
 `
         // 获取历史记录
         if (this.config.groupHistory) {
@@ -889,7 +891,8 @@ ${mcpPrompts}
       return {
         toolCall,
         toolName,
-        result: `error: tool ${toolName} is not available in this session`
+        result: `error: tool ${toolName} is not available in this session`,
+        _executed: false
       }
     }
 
@@ -900,7 +903,8 @@ ${mcpPrompts}
       return {
         toolCall,
         toolName,
-        result: `error: invalid JSON arguments: ${error.message}`
+        result: `error: invalid JSON arguments: ${error.message}`,
+        _executed: true
       }
     }
 
@@ -927,7 +931,8 @@ ${mcpPrompts}
         return {
           toolCall,
           toolName,
-          result: `工具 ${toolName} 正在处理同一用户的上一条请求，已跳过重复调用`
+          result: `工具 ${toolName} 正在处理同一用户的上一条请求，已跳过重复调用`,
+          _executed: false
         }
       }
 
@@ -961,10 +966,12 @@ ${mcpPrompts}
           error: failed ? result : ""
         })
       }
+      const finalResult = result?.trim() ? result : `工具 ${toolName} 执行成功`
       return {
         toolCall,
         toolName,
-        result: result?.trim() ? result : `工具 ${toolName} 执行成功`
+        result: finalResult,
+        _executed: true
       }
     } catch (error) {
       if (dedupeEnabled && toolRunValue.messageId) {
@@ -981,7 +988,8 @@ ${mcpPrompts}
       return {
         toolCall,
         toolName,
-        result: `error: ${error.message}`
+        result: `error: ${error.message}`,
+        _executed: true
       }
     } finally {
       if (dedupeEnabled && activeDedupeToolRuns.get(toolRunKey) === toolRunValue) {
@@ -1025,6 +1033,18 @@ ${mcpPrompts}
 
       allToolResults.push(...validResults)
       session.toolName = validResults[validResults.length - 1]?.toolName
+
+      // 批量写工具调用历史（同一条用户消息的多工具会聚合到同一条 record）
+      const recordedItems = validResults
+        .filter(r => r._executed)
+        .map(r => ({ toolName: r.toolName, result: r.result }))
+      if (recordedItems.length) {
+        this.recordToolHistoryBatch({
+          groupId: e.group_id,
+          messageId: e.message_id || null,
+          items: recordedItems
+        }).catch(err => logger?.warn?.(`[工具历史] 批量记录失败：${err.message}`))
+      }
 
       currentMessages.push(...validResults.map(({ toolCall, toolName, result }) => ({
         role: "tool",
@@ -1364,6 +1384,7 @@ Object.assign(
   ChatPlugin.prototype,
   configManagerMethods,
   taskStatusMethods,
+  toolHistoryMethods,
   messageBuilderMethods,
   conversationTrackerMethods,
   replySenderMethods

@@ -247,6 +247,11 @@ pluginSettings:
     enabled: false
     topN: 10
     threshold: 0.35
+  toolHistorySystem:
+    enabled: true
+    maxItems: 10
+    maxResultLength: 150
+    ttlDays: 7
   embeddingAiConfig:
     embeddingApiUrl: https://api.openai.com/v1/embeddings
     embeddingApiModel: text-embedding-3-small
