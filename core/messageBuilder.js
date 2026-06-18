@@ -276,10 +276,10 @@ export const messageBuilderMethods = {
     let middle = messages.slice(systemMsgs.length, messages.length - lastUser.length)
 
     // 格式化中间消息
+    // 注意：传入的 messages 经 chat.js#handleTool 构造，历史只会是 role: 'user' / 'assistant'
+    // （见 chat.js 调用点：chatHistory.map 已把每条消息映射成 user 或 assistant），
+    // 不会出现 role: 'tool'。如未来要把工具调用记录回灌进历史，再补对应分支。
     const formattedLines = []
-
-    // 用于临时存储工具调用结果
-    let pendingToolResults = []
 
     for (let i = 0; i < middle.length; i++) {
       const msg = middle[i]
@@ -288,37 +288,14 @@ export const messageBuilderMethods = {
         if (!msg.content.startsWith("【系统提示】")) {
           formattedLines.push(msg.content)
         }
-      } else if (msg.role === "tool") {
-        // 处理工具调用结果
-        const toolContent = msg.content || ''
-        const toolName = msg.name || '未知工具'
-
-        // 确保内容不为空
-        if (toolContent && toolContent.trim() !== '') {
-          const toolResult = toolContent.length > this.messageManager.MESSAGE_MAX_LENGTH
-            ? toolContent.substring(0, this.messageManager.MESSAGE_MAX_LENGTH) + "...(结果已截断)"
-            : toolContent
-          pendingToolResults.push(`此处为调用工具的结果，不计算到聊天记录中：[调用工具:${toolName}] 调用结果:${toolResult}`)
-        }
       } else if (msg.role === "assistant" && msg.content) {
         if (!msg.content.startsWith("【系统提示】")) {
-          // 先添加工具调用结果
-          if (pendingToolResults.length > 0) {
-            formattedLines.push(...pendingToolResults)
-            pendingToolResults = []
-          }
-          // 再添加 Bot 回复
           const assistantContent = msg.content.length > 200
             ? msg.content.substring(0, 200) + "..."
             : msg.content
           formattedLines.push(`[Bot回复]: ${assistantContent}`)
         }
       }
-    }
-
-    // 处理剩余的工具结果
-    if (pendingToolResults.length > 0) {
-      formattedLines.push(...pendingToolResults)
     }
 
     const formatted = formattedLines.join("\n")
