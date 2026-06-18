@@ -250,7 +250,7 @@ pluginSettings:
   toolHistorySystem:
     enabled: true
     maxItems: 10
-    maxResultLength: 150
+    maxResultLength: 500
     ttlDays: 7
   embeddingAiConfig:
     embeddingApiUrl: https://api.openai.com/v1/embeddings
