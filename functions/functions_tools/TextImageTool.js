@@ -4,7 +4,6 @@ import sharp from "sharp"
 import { AbstractTool } from "./AbstractTool.js"
 
 const AVATAR_SIZE = 64
-const MAX_TEXT_LENGTH = 1800
 const DELETE_RETRY_DELAYS_MS = [0, 200, 1000]
 
 const TEXT_FONT_SIZE = 28
@@ -641,7 +640,7 @@ export class TextImageTool extends AbstractTool {
     const text = String(opts.text || "").trim()
     if (!text) return "error: text 不能为空"
 
-    const safeText = text.slice(0, MAX_TEXT_LENGTH)
+    const safeText = text
     const nickname = String(opts.nickname || globalThis.Bot?.nickname || "机器人").trim()
     const avatarUrl =
       opts.avatarUrl || `https://q1.qlogo.cn/g?b=qq&nk=${globalThis.Bot?.uin || e?.self_id || ""}&s=100`
