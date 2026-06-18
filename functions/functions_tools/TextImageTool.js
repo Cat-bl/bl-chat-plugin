@@ -119,28 +119,13 @@ async function deleteGeneratedFile(filePath) {
   }
 }
 
-// 缓存 puppeteer browser 实例，避免每次调用都启停（启动 ~500ms）。
-// 唯一清理点：browser 的 disconnected 事件 -> 把 promise 清空，下次 getBrowser 重新 launch。
-// 不在调用方做 connected 检查：避免两个并发调用都判定"已死"各自再 launch 一次造成泄漏。
-let browserPromise = null
-function getBrowser() {
-  if (browserPromise) return browserPromise
-  browserPromise = puppeteer
-    .launch({
-      headless: NODE_MAJOR >= 16 ? "new" : true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
-    })
-    .then(browser => {
-      browser.on("disconnected", () => {
-        browserPromise = null
-      })
-      return browser
-    })
-    .catch(err => {
-      browserPromise = null
-      throw err
-    })
-  return browserPromise
+// 每次调用都启停 browser：渲染完立刻关闭，不常驻。
+// 代价是每次调用多 ~500ms 启动开销，换来的是非高峰期 0 内存占用。
+async function launchBrowser() {
+  return puppeteer.launch({
+    headless: NODE_MAJOR >= 16 ? "new" : true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  })
 }
 
 export class TextImageTool extends AbstractTool {
@@ -198,9 +183,9 @@ export class TextImageTool extends AbstractTool {
     ])
     const html = buildPageHtml({ markdownHtml, nickname, avatarDataUrl })
 
-    const browser = await getBrowser()
-    const page = await browser.newPage()
+    const browser = await launchBrowser()
     try {
+      const page = await browser.newPage()
       await page.setViewport({ width: 1100, height: 800, deviceScaleFactor: 2 })
       // 头像已经是 data URL，没有外部网络资源；用 domcontentloaded 即可
       await page.setContent(html, { waitUntil: "domcontentloaded" })
@@ -215,7 +200,7 @@ export class TextImageTool extends AbstractTool {
       await handle.screenshot({ path: outputPath, type: "png" })
       return outputPath
     } finally {
-      await page.close().catch(() => {})
+      await browser.close().catch(() => {})
     }
   }
 }
