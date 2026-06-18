@@ -14,7 +14,6 @@ import puppeteer from "../../../lib/puppeteer/puppeteer.js";
 import common from "../../../lib/common/common.js";
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-import FormData from 'form-data';
 import WebSocket from 'ws';
 import axios from "axios";
 import { getEncoding } from 'js-tiktoken';
@@ -41,7 +40,6 @@ export const dependencies = {
   moment,
   common,
   getEncoding,
-  FormData,
   puppeteer,
   WebSocket,
   mimeTypes,
