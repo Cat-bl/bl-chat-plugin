@@ -97,7 +97,7 @@ export class SendLocalEmojiTool extends AbstractTool {
       emojiPackManager.markUsed(item.hash).catch(() => {})
       const tagInfo = (item.tags || []).slice(0, 3).join(",") || "无标签"
       const followInfo = followUpText ? ` + 文字"${followUpText.slice(0, 20)}${followUpText.length > 20 ? "..." : ""}"` : ""
-      return `已发送表情包 [${tagInfo}]${followInfo} (策略: ${strategy})`
+      return this.terminal(`已发送表情包 [${tagInfo}]${followInfo} (策略: ${strategy})`)
     } catch (err) {
       // 文字已发但图失败：仍计入限流，避免 bot 反复尬聊"哈哈哈"无图
       if (textSent) emojiPackManager.recordSend(groupId)

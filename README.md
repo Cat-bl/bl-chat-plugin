@@ -252,6 +252,18 @@ export class CustomWeatherTool extends AbstractTool {
 - 工具文件写错或执行报错只会记录日志/返回 `error`，不会影响其它工具和正常聊天。
 - 更多实际使用可参考`functions/functions_tools` 中的工具文件代码
 
+**终态工具**：如果工具已经自己把回复发到群里了（发图、发语音、发表情包等），不需要 LLM 再生成文字续话，就在成功分支 `return this.terminal(result)` 标记本次为终态，本轮调用后跳过最终文本回复。失败时仍直接返回 `"error: ..."` 字符串（不要包成 terminal），让 LLM 看到错误并改用其它方式。`sendLocalEmojiTool`/`waitTool`/`textImageTool` 三个内置工具就是用这套机制。
+```js
+async func(opts, e) {
+  try {
+    await e.reply("我已经自己发完啦")
+    return this.terminal("已发送完毕，无需再生成文字回复")
+  } catch (err) {
+    return `error: 发送失败：${err.message}`
+  }
+}
+```
+
 ---
 
 # mcp-servers.yaml配置说明
@@ -586,7 +598,7 @@ MCP 管理命令：
 - **选图算法（v2）**：L1 embedding 召回（基于 description）+ L2 全库加权兜底；统一公式 `score³ × usageFactor_capped × cooldownPenalty(lastUsedAt)` —— 硬相关性门只让 top-tier 入选，三档冷却（<30min ×0.2、<60min ×0.5、<3h ×0.8）保证长尾轮转
 - **反重复**：按群隔离记忆最近 N 次发过的 hash，仅按 hash 排除（tag 太粗易清空候选池）
 - **软限流**：1 分钟超 3 次返回 `error: 近期发送过频，请改用文字`，LLM 自动改用文字
-- **终态机制**：成功发图后不触发 LLM 续话（除非 LLM 显式传 followUpText 已经带了伴随文字）；失败返回 error 时正常续话
+- **终态机制**：成功发图后不触发 LLM 续话（除非 LLM 显式传 followUpText 已经带了伴随文字）；失败返回 error 时正常续话（终态标识见下方「自定义工具」章节，工具 func 返回 `this.terminal(result)` 即为终态）
 
 **LLM 工具参数说明**：
 - `query`（必填）：**用 10-30 字描述"内容+情绪+使用场景"**，例如 "看到群友翻车想嘲讽他一下的笑死表情"、"装无辜耍赖的卖萌猫咪表情"。不要只传 "开心" 这种短词

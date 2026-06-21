@@ -24,9 +24,6 @@ import { replySenderMethods } from "../core/replySender.js"
 const _path = process.cwd()
 
 
-// 终态工具：本轮调用后不再请求 LLM 续话（工具的执行结果本身即为最终输出）
-const TERMINAL_TOOL_NAMES = new Set(['sendLocalEmojiTool', 'waitTool', 'textImageTool'])
-
 const activeDedupeToolRuns = new Map()
 
 let pluginInitialized = false
@@ -954,7 +951,9 @@ ${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
       const rawResult = isMCPTool
         ? await this.executeTool(toolName, params, e)
         : await this.executeTool(this.toolInstances[toolName], params, e)
-      const result = this.serializeToolResult(rawResult)
+      // 本地工具 func 可返回 this.terminal(result) 标记本次为终态（成功后不再请求 LLM 续话）
+      const isTerminal = rawResult && typeof rawResult === "object" && !Array.isArray(rawResult) && rawResult.terminal === true
+      const result = this.serializeToolResult(isTerminal ? rawResult.result : rawResult)
       if (dedupeEnabled && toolRunValue.messageId) {
         const failed = this.isToolResultError(result)
         await this.saveTaskStatus({
@@ -971,7 +970,8 @@ ${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
         toolCall,
         toolName,
         result: finalResult,
-        _executed: true
+        _executed: true,
+        _terminal: isTerminal
       }
     } catch (error) {
       if (dedupeEnabled && toolRunValue.messageId) {
@@ -1053,7 +1053,7 @@ ${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
         content: result
       })))
 
-      if (validResults.every(r => TERMINAL_TOOL_NAMES.has(r.toolName) && typeof r.result === 'string' && !r.result.startsWith('error:'))) {
+      if (validResults.every(r => r._terminal && typeof r.result === 'string' && !r.result.startsWith('error:'))) {
         logger.info(`[工具调用] 本轮全部为终态工具(${validResults.map(r => r.toolName).join(',')})且执行成功，跳过最终文本回复`)
         session.toolResults = allToolResults
         return
