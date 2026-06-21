@@ -11,7 +11,7 @@ export class QQZoneTool extends AbstractTool {
       properties: {
         text: {
           type: 'string',
-          description: '你将要发送到qq空间说说的内容(以发送者的角度生成流畅通顺的内容)',
+          description: '说说正文文本（以发送者的角度生成流畅通顺的内容）。注意：参数名必须为 "text"，不要用 content/message 等其他名字。例：{"text": "今天天气真好"}',
         },
         type: {
           type: 'boolean',
@@ -30,7 +30,9 @@ export class QQZoneTool extends AbstractTool {
   }
 
   async func(opts, e) {
-    const { text, type = false, pos = 1} = opts;
+    // 兼容模型可能误用的常见别名（content/message/msg），以 text 为准
+    const text = opts.text ?? opts.content ?? opts.message ?? opts.msg
+    const { type = false, pos = 1 } = opts
     if (!type) {
       try {
         if (!text) return {
