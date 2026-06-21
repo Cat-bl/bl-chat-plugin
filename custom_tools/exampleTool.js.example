@@ -68,6 +68,16 @@ export class CustomExampleTool extends AbstractTool {
     // 返回字符串即可，插件会把结果交给模型整理成自然回复
     // 如果这里直接 await e.reply("xxx") 也可以，但通常更建议 return 结果
     return lines.join("\n")
+
+    // 终态工具示例：
+    // 如果你的工具已经自己把回复发到群里了（比如发图、发语音、发表情包），
+    // 不需要模型再生成文字续话，就用 this.terminal(...) 标记本次为终态：
+    //
+    //   await e.reply("我已经自己发完啦")
+    //   return this.terminal("已发送完毕，无需再生成文字回复")
+    //
+    // 成功时用 this.terminal(...)；失败时仍返回 "error: ..." 字符串（不要包成 terminal），
+    // 这样模型会看到错误并改用其它方式回复。
   }
 }
 

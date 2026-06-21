@@ -33,6 +33,6 @@ export class WaitTool extends AbstractTool {
     }
     const seconds = Math.max(1, Math.min(60, Number(opts.seconds) || 5))
     instance.scheduleWaitReply(e, seconds, opts.reason)
-    return `已安排 ${seconds} 秒后续话`
+    return this.terminal(`已安排 ${seconds} 秒后续话`)
   }
 }

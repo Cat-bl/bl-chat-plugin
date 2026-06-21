@@ -137,4 +137,15 @@ export class AbstractTool {
   async func(opts, e) {
     throw new Error('工具函数必须实现');
   }
+
+  /**
+   * 标记本次工具调用为"终态"——执行结果本身即为最终输出，本轮不再请求 LLM 续话。
+   * 工具 func 在成功完成、不需要 LLM 再生成文本回复时，return this.terminal(result) 即可。
+   * 失败时仍直接返回 "error: ..." 字符串（非终态），让 LLM 续话改用其它方式。
+   * @param {*} result - 要回填给模型/日志的结果内容（字符串或对象）
+   * @returns {{ terminal: true, result: * }}
+   */
+  terminal(result) {
+    return { terminal: true, result };
+  }
 }
