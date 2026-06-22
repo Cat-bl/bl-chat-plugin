@@ -122,12 +122,22 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             }
 
             let toolsData;
+            const toolsRawText = await toolsResponse.text();
             try {
-                toolsData = await toolsResponse.json();
+                toolsData = JSON.parse(toolsRawText);
                 logger.debug('工具 API 响应:', JSON.stringify(toolsData, null, 2));
             } catch (toolsJsonError) {
-                logger.error("解析工具 API 响应 JSON 失败:", toolsJsonError);
-                return { error: `解析工具 API 响应 JSON 失败：${toolsJsonError.message}` };
+                // 工具 API 强制返回 SSE 的兜底
+                if (toolsRawText.includes('data: ')) {
+                    logger.debug('工具 API 响应是 SSE 格式，降级解析')
+                    toolsData = parseSSETextUnified(toolsRawText, toolsApiFormat)
+                    if (toolsData?.error) {
+                        return toolsData
+                    }
+                } else {
+                    logger.error("解析工具 API 响应失败:", toolsJsonError, toolsRawText.slice(0, 200));
+                    return { error: `解析工具 API 响应失败：${toolsJsonError.message}` };
+                }
             }
 
             // 转换 Anthropic 响应为 OpenAI 格式
@@ -266,12 +276,24 @@ export async function YTapi(requestData, config, toolContent, toolName) {
         }
 
         let responseData;
+        // 先读 text，再判断是 JSON 还是 SSE（兜底某些中转强制返回流式）
+        const rawText = await response.text();
         try {
-            responseData = await response.json();
+            responseData = JSON.parse(rawText);
             logger.debug(`${provider || 'API'} 响应:`, JSON.stringify(responseData, null, 2));
         } catch (jsonError) {
-            logger.error(`解析 ${provider || 'API'} 响应 JSON 失败:`, jsonError);
-            return { error: `解析 ${provider || 'API'} 响应 JSON 失败：${jsonError.message}` };
+            // JSON 解析失败，尝试当作 SSE 文本解析
+            if (rawText.includes('data: ')) {
+                logger.debug(`${provider || 'API'} 响应是 SSE 格式，降级解析`)
+                responseData = parseSSETextUnified(rawText, apiFormat)
+                if (responseData?.error) {
+                    return responseData
+                }
+                // SSE 解析后已经是 OpenAI 格式，不需要再走 Anthropic 转换
+                return processResponse(responseData)
+            }
+            logger.error(`解析 ${provider || 'API'} 响应失败:`, jsonError, rawText.slice(0, 200));
+            return { error: `解析 ${provider || 'API'} 响应失败：${jsonError.message}` };
         }
 
         // 根据 API 格式转换响应
@@ -751,17 +773,36 @@ export async function callAI(config, messages, options = {}) {
         }
 
         // 处理流式响应
+        // - 用户主动传 stream: true 时，走真正的流式 reader（必要时模型可以早返回）
+        // - 服务端返回 SSE Content-Type 但用户没传 stream:true 时，body 可能不是 ReadableStream
+        //   （部分 fetch 实现/中转代理会先缓存完整响应），统一走 text() 兜底解析更稳
+        const contentType = response.headers.get('content-type') || ''
+        const isSSE = contentType.includes('text/event-stream') || contentType.includes('stream')
+
         if (stream) {
+            // 用户主动流式：走真正的流式 reader
             return handleStreamResponseUnified(response, apiFormat)
         }
 
-        // 处理非流式响应
+        if (isSSE) {
+            // 服务端强返 SSE：先读 text 再解析，避免 body.getReader 不可用的兼容性问题
+            const sseText = await response.text()
+            return parseSSETextUnified(sseText, apiFormat)
+        }
+
+        // 处理非流式响应：先读 text，再判断是 JSON 还是 SSE（兜底）
+        // 某些服务端会忽略 stream:false 强制返回 SSE，且 content-type 可能不准确
+        const rawText = await response.text()
         let responseData
         try {
-            responseData = await response.json()
-        } catch (jsonError) {
-            logger.error('[callAI] 解析响应 JSON 失败:', jsonError)
-            return { error: `解析响应 JSON 失败：${jsonError.message}` }
+            responseData = JSON.parse(rawText)
+        } catch {
+            // JSON 解析失败，尝试当作 SSE 文本解析
+            if (rawText.includes('data: ')) {
+                return parseSSETextUnified(rawText, apiFormat)
+            }
+            logger.error('[callAI] 解析响应失败，既不是 JSON 也不是 SSE:', rawText.slice(0, 200))
+            return { error: `解析响应失败：响应格式无法识别` }
         }
 
         // 转换 Anthropic 响应为 OpenAI 格式
@@ -786,60 +827,140 @@ export async function callAI(config, messages, options = {}) {
  * 统一处理流式响应（兼容 OpenAI 和 Anthropic SSE 格式）
  * @param {Response} response - fetch 响应对象
  * @param {string} apiFormat - 'openai' 或 'anthropic'
- * @returns {Promise<string>} 拼接后的完整文本内容
+ * @returns {Promise<Object>} 返回 OpenAI 格式的响应对象
  */
 async function handleStreamResponseUnified(response, apiFormat) {
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let content = ''
+    let buffer = ''
+    let finishReason = null
+    let done_flag = false
 
     try {
-        while (true) {
+        while (!done_flag) {
             const { value, done } = await reader.read()
             if (done) break
 
-            const chunk = decoder.decode(value, { stream: true })
-            for (const line of chunk.split('\n')) {
+            // 解码并累积到 buffer，按完整行处理，避免 chunk 切分破坏 JSON
+            buffer += decoder.decode(value, { stream: true })
+
+            const lines = buffer.split('\n')
+            // 最后一行可能不完整，保留到 buffer 等下一个 chunk
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
                 if (!line.startsWith('data: ')) continue
                 const dataStr = line.slice(6).trim()
-                if (dataStr === '[DONE]') break
+                if (!dataStr) continue
+                if (dataStr === '[DONE]') {
+                    done_flag = true
+                    break
+                }
 
                 try {
                     const data = JSON.parse(dataStr)
 
                     if (apiFormat === 'anthropic') {
-                        // Anthropic 流式格式
+                        // Anthropic 流式：content_block_delta + text_delta
                         if (data.type === 'content_block_delta' && data.delta?.text) {
                             content += data.delta.text
                         }
+                        // message_delta 携带 stop_reason
+                        if (data.type === 'message_delta' && data.delta?.stop_reason) {
+                            finishReason = data.delta.stop_reason
+                        }
                     } else {
-                        // OpenAI 流式格式
-                        const delta = data?.choices?.[0]?.delta?.content
+                        // OpenAI 流式
+                        const choice = data?.choices?.[0]
+                        const delta = choice?.delta?.content
                         if (delta) content += delta
+                        if (choice?.finish_reason) finishReason = choice.finish_reason
                     }
-                } catch (parseError) {
-                    // 跳过解析失败的行
+                } catch {
+                    // 跳过解析失败的行（通常是注释行或不完整 JSON）
                 }
             }
         }
 
-        if (!content) {
-            throw new Error('未接收到有效内容')
+        // 处理 buffer 中剩余的最后一行
+        if (buffer.startsWith('data: ')) {
+            const dataStr = buffer.slice(6).trim()
+            if (dataStr && dataStr !== '[DONE]') {
+                try {
+                    const data = JSON.parse(dataStr)
+                    if (apiFormat === 'anthropic') {
+                        if (data.type === 'content_block_delta' && data.delta?.text) {
+                            content += data.delta.text
+                        }
+                    } else {
+                        const delta = data?.choices?.[0]?.delta?.content
+                        if (delta) content += delta
+                    }
+                } catch { /* 忽略 */ }
+            }
         }
 
-        // 返回 OpenAI 格式的响应对象
+        if (!content) {
+            return { error: '未接收到有效内容' }
+        }
+
         return {
             choices: [{
-                message: {
-                    role: 'assistant',
-                    content: content
-                },
-                finish_reason: 'stop'
+                message: { role: 'assistant', content },
+                finish_reason: finishReason || 'stop'
             }]
         }
     } catch (error) {
         logger.error('[handleStreamResponseUnified] 流式响应处理失败:', error)
         return { error: `流式响应处理失败：${error.message}` }
+    } finally {
+        // 确保 reader 释放
+        try { reader.releaseLock() } catch { /* 忽略 */ }
+    }
+}
+
+/**
+ * 从已读取的文本解析 SSE 格式（非流式兜底）
+ * @param {string} text - 已读取的完整 SSE 文本
+ * @param {string} apiFormat - 'openai' 或 'anthropic'
+ * @returns {Object} OpenAI 格式的响应对象，或 { error: string }
+ */
+function parseSSETextUnified(text, apiFormat) {
+    let content = ''
+    let finishReason = null
+    for (const line of text.split('\n')) {
+        if (!line.startsWith('data: ')) continue
+        const dataStr = line.slice(6).trim()
+        if (!dataStr || dataStr === '[DONE]') break
+
+        try {
+            const data = JSON.parse(dataStr)
+            if (apiFormat === 'anthropic') {
+                if (data.type === 'content_block_delta' && data.delta?.text) {
+                    content += data.delta.text
+                }
+                if (data.type === 'message_delta' && data.delta?.stop_reason) {
+                    finishReason = data.delta.stop_reason
+                }
+            } else {
+                const choice = data?.choices?.[0]
+                const delta = choice?.delta?.content
+                if (delta) content += delta
+                if (choice?.finish_reason) finishReason = choice.finish_reason
+            }
+        } catch { /* 跳过解析失败的行 */ }
+    }
+
+    if (!content) {
+        return { error: '未接收到有效内容' }
+    }
+
+    return {
+        choices: [{
+            message: { role: 'assistant', content },
+            finish_reason: finishReason || 'stop'
+        }]
     }
 }
 
