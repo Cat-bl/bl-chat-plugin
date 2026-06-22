@@ -3,6 +3,22 @@ import { removeToolPromptsFromMessages } from "../utils/textUtils.js"
 const { _path, fetch, fs, path } = dependencies;
 
 /**
+ * 生成动态的客户端版本标识（基于当前日期）
+ * @returns {Object} 包含 anthropicVersion 和 clientVersion 的对象
+ */
+function generateDynamicVersions() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+
+    return {
+        anthropicVersion: `${year}-${month}-01`, // 格式: 2026-06-01
+        // 伪装成浏览器，避免中转站拒绝 CLI 客户端
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+    };
+}
+
+/**
  * 检测 API 格式
  * @param {string} url - API 端点 URL
  * @returns {'anthropic'|'openai'} API 格式类型
