@@ -1,6 +1,7 @@
 import { AbstractTool } from './AbstractTool.js';
 import { getBase64Image, normalizeImageUrls } from '../../utils/fileUtils.js';
 import { dependencies } from "../../dependence/dependencies.js";
+import { callAI } from "../../utils/apiClient.js";
 import fs from "fs";
 import YAML from "yaml";
 import path from "path";
@@ -46,20 +47,21 @@ export class BananaTool extends AbstractTool {
       const { imageEditApiUrl: apiUrl, imageEditApiKey: apiKey, imageEditApiModel: model } =
         config.imageEditAiConfig || {};
 
-      const response = await fetch(apiUrl || 'https://api.openai.com/v1/chat/completions', {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey || 'sk-xxxxxx'}`,
-        },
-        body: JSON.stringify({
+      const result = await callAI(
+        {
+          url: apiUrl || 'https://api.openai.com/v1/chat/completions',
           model: model || "gemini-3-pro-image-preview",
-          messages: [{ role: "user", content: imgurls }],
-          stream: false,
-        }),
-      });
+          apikey: apiKey || 'sk-xxxxxx'
+        },
+        [{ role: "user", content: imgurls }],
+        { stream: false }
+      )
 
-      const imageUrl = await this.parseResponse(response);
+      if (result.error) {
+        return { error: `图片生成失败: ${result.error}` }
+      }
+
+      const imageUrl = result?.choices?.[0]?.message?.content || ''
       const processedUrl = this.extractImageUrl(imageUrl);
 
       if (processedUrl) {

@@ -1,6 +1,7 @@
 import { AbstractTool } from './AbstractTool.js';
 import { getBase64Image, normalizeImageUrls } from '../../utils/fileUtils.js';
 import { dependencies } from "../../dependence/dependencies.js";
+import { callAI } from "../../utils/apiClient.js";
 const { mimeTypes, axios } = dependencies;
 import fs from "fs";
 import YAML from "yaml";
@@ -208,26 +209,25 @@ export class GoogleImageAnalysisTool extends AbstractTool {
             const history = [{ role: "user", content: imgurls }];
             try {
 
-
                 const apiUrl = config.analysisAiConfig?.analysisApiUrl || 'https://api.openai.com/v1/chat/completions'
                 const apiKey = config.analysisAiConfig?.analysisApiKey || 'sk-xxxxxx'
+                const apiModel = config.analysisAiConfig?.analysisApiModel || "gemini-3-pro-image-preview"
 
-                const requestData = {
-                    model: config.analysisAiConfig?.analysisApiModel || "gemini-3-pro-image-preview",
-                    messages: history,
-                    stream: false
+                const result = await callAI(
+                    {
+                        url: apiUrl,
+                        model: apiModel,
+                        apikey: apiKey
+                    },
+                    history,
+                    { stream: false }
+                )
+
+                if (result.error) {
+                    return { error: `图片分析失败: ${result.error}` }
                 }
 
-                const response = await fetch(apiUrl, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${apiKey}`,
-                    },
-                    body: JSON.stringify(requestData),
-                })
-
-                const content = await this.parseResponse(response)
+                const content = result?.choices?.[0]?.message?.content || '无法分析图片'
                 return {
                     analysis: content
                 };

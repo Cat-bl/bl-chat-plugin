@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "crypto"
+import { callAI } from "./apiClient.js"
 
 const USER_CATEGORIES = ["identity", "likes", "dislikes", "relationship", "habits", "skills", "experience"]
 const GROUP_CATEGORIES = ["topic", "rule", "meme", "event", "member"]
@@ -649,26 +650,24 @@ class MemoryExtractor {
     const cfg = this.config.memoryAiConfig || {}
     if (!cfg.memoryAiUrl || !cfg.memoryAiApikey) return "[]"
 
-    const response = await fetch(cfg.memoryAiUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${cfg.memoryAiApikey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
+    const result = await callAI(
+      {
+        url: cfg.memoryAiUrl,
         model: cfg.memoryAiModel || "gpt-4o-mini",
-        messages,
-        temperature: 0.2,
-        max_tokens: maxTokens
-      })
-    })
+        apikey: cfg.memoryAiApikey
+      },
+      messages,
+      {
+        maxTokens,
+        temperature: 0.2
+      }
+    )
 
-    if (!response.ok) {
-      throw new Error(`记忆 AI 请求失败：${response.status}`)
+    if (result.error) {
+      throw new Error(`记忆 AI 请求失败：${result.error}`)
     }
 
-    const data = await response.json()
-    return data?.choices?.[0]?.message?.content?.trim() || "[]"
+    return result?.choices?.[0]?.message?.content?.trim() || "[]"
   }
 
   async createEmbedding(text) {

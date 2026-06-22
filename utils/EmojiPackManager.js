@@ -4,6 +4,7 @@ import path from "path"
 import crypto from "crypto"
 import YAML from "yaml"
 import sharp from "sharp"
+import { callAI } from "./apiClient.js"
 
 const _path = process.cwd()
 const CONFIG_PATH = path.join(_path, "plugins/bl-chat-plugin/config/message.yaml")
@@ -338,17 +339,25 @@ export class EmojiPackManager {
     if (!url || !key || String(key).includes("sk-xxx")) {
       throw new Error(`${keyField} 未配置`)
     }
-    const finalBody = { model: cfg[modelField], ...body }
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify(finalBody)
-    })
-    if (!response.ok) {
-      const text = await response.text().catch(() => "")
-      throw new Error(`API ${response.status}: ${text.slice(0, 120)}`)
+
+    const result = await callAI(
+      {
+        url: url,
+        model: cfg[modelField] || body.model,
+        apikey: key
+      },
+      body.messages,
+      {
+        maxTokens: body.max_tokens,
+        temperature: body.temperature
+      }
+    )
+
+    if (result.error) {
+      throw new Error(`API 调用失败: ${result.error}`)
     }
-    return await response.json()
+
+    return result
   }
 
   async tagWithVLM(buffer, ext) {
@@ -493,20 +502,18 @@ ${list}
 
 仅输出 JSON（不要 markdown 代码块）：{"index": <候选编号 0-${sample.length - 1}>, "reason": "简短理由"}`
 
-    const response = await fetch(cfg.toolsAiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.toolsAiApikey}` },
-      body: JSON.stringify({
+    const result = await callAI(
+      {
+        url: cfg.toolsAiUrl,
         model: cfg.toolsAiModel || "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }]
-      })
-    })
-    if (!response.ok) {
-      const text = await response.text().catch(() => "")
-      throw new Error(`tools API ${response.status}: ${text.slice(0, 120)}`)
+        apikey: cfg.toolsAiApikey
+      },
+      [{ role: "user", content: prompt }]
+    )
+    if (result.error) {
+      throw new Error(`tools API 调用失败: ${result.error}`)
     }
-    const json = await response.json()
-    const text = json.choices?.[0]?.message?.content || ""
+    const text = result.choices?.[0]?.message?.content || ""
     const match = text.match(/\{[\s\S]*\}/)
     if (!match) throw new Error("替换决策未返回 JSON")
     const parsed = JSON.parse(match[0])
