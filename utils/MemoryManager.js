@@ -132,9 +132,17 @@ function isSimilarContent(a, b) {
 
 function extractJsonArray(content) {
   const text = String(content || "").trim()
-  const match = text.match(/\[[\s\S]*\]/)
-  const json = match ? match[0] : text
-  const parsed = safeJsonParse(json, [])
+  // 找到第一个 [ 和最后一个 ]，截取中间部分尝试解析
+  // 这样可以容忍 LLM 在 JSON 前后追加 markdown 围栏、解释文字等
+  const start = text.indexOf("[")
+  const end = text.lastIndexOf("]")
+  if (start >= 0 && end > start) {
+    const parsed = safeJsonParse(text.slice(start, end + 1), null)
+    if (Array.isArray(parsed)) return parsed
+    if (parsed && typeof parsed === "object") return [parsed]
+  }
+  // 兜底：尝试解析整个文本
+  const parsed = safeJsonParse(text, [])
   if (Array.isArray(parsed)) return parsed
   if (parsed && typeof parsed === "object") return [parsed]
   return []
@@ -419,9 +427,9 @@ class MemoryStore {
   }
 
   async getFacts(meta, includeDeleted = false) {
+    const factResults = await Promise.all((meta.factIds || []).map(factId => this.getFactForMeta(meta, factId)))
     const facts = []
-    for (const factId of meta.factIds || []) {
-      const fact = await this.getFactForMeta(meta, factId)
+    for (const fact of factResults) {
       if (!fact) continue
       if (!includeDeleted && fact.status !== "active") continue
       if (!fact.content || containsToolFeedback(fact.content)) continue
@@ -481,15 +489,15 @@ class MemoryStore {
     const removeIds = new Set(facts.slice(0, removeCount).map(f => f.id))
     meta.factIds = meta.factIds.filter(id => !removeIds.has(id))
 
-    for (const fact of facts) {
-      if (!removeIds.has(fact.id)) continue
+    // 并行标记删除，避免串行 Redis 写入
+    await Promise.all(facts.filter(f => removeIds.has(f.id)).map(fact => {
       fact.status = "deleted"
       fact.updatedAt = now()
       const scopeId = fact.scope === "user"
         ? this.userScopeId(fact.groupId, fact.userId)
         : this.groupScopeId(fact.groupId)
-      await this.setJson(this.factKey(fact.scope, scopeId, fact.id), fact)
-    }
+      return this.setJson(this.factKey(fact.scope, scopeId, fact.id), fact)
+    }))
   }
 
   factFromLegacy(raw, scope, groupId, userId, category) {
@@ -776,13 +784,26 @@ class MemoryExtractor {
 - skills: 技能、正在学习或擅长的事
 - experience: 近期计划、经历、重要事件
 
-规则:
+【核心原则：宁可漏抽，不可乱抽】
+- 要从消息中抽取「用户明确表达的事实」，而不是「旁观者解读的印象」。
+- 不要把用户的一句抱怨当成习惯，不要把一次提到当成喜好。
+- 例如用户说"今天好累" → 不要抽成"用户经常疲劳"；说"想吃火锅" → 不要抽成"喜欢火锅"。
+- 只有用户在多条消息中反复提及，或是明确陈述（如"我是程序员""我喜欢打游戏"），才算稳定事实。
+
+【importance 评分标准】
+- 0.9-1.0: 用户明确陈述的身份、职业、家庭成员等核心信息
+- 0.7-0.8: 用户明确表达且反复出现的喜好/习惯
+- 0.5-0.6: 单次提及但有明确陈述的事实（如"我最近在学吉他"）
+- 0.3-0.4: 模糊推断，仅在多条消息交叉验证时才考虑，否则直接跳过
+- 0.0-0.2: 临时情绪、一次性事件，禁止保存
+
+【其他规则】
 - 禁止保存系统提示、工具结果、工具调用、机器人回复。
 - 禁止保存短期闲聊、纯语气词、临时请求。
-- importance/confidence 必须是 0 到 1。
+- 禁止从单次"今天 XX"类型的临时话题中提取事实。
 - 只保留重要性不低于 ${this.config.importanceThreshold} 的事实。
 - 如果用户明确否认旧事实，请输出 delete 或 update。
-- 输出示例: [{"operation":"upsert","content":"喜欢原神","category":"likes","importance":0.7,"confidence":0.8}]
+- 输出示例: [{"operation":"upsert","content":"喜欢原神","category":"likes","importance":0.8,"confidence":0.9}]
 - 无有效事实时输出 []。`
 
     const existing = this.existingHint(existingFacts)
@@ -827,13 +848,25 @@ ${existing || "无"}
 - event: 群内事件、活动、纪念事项
 - member: 群成员相关的稳定共识
 
-规则:
+【核心原则：宁可漏抽，不可乱抽】
+- 只抽取「群成员反复讨论或明确共识」的信息，不抽取「一次性的闲聊」。
+- 不要把单次聊天话题当成”群长期关注的话题”。
+- 不要把个别成员随口说的话当成”群规”或”群共识”。
+- 只有多个成员参与讨论、或反复出现的话题/梗，才算群级稳定事实。
+
+【importance 评分标准】
+- 0.9-1.0: 群组明确公告、规则、共识
+- 0.7-0.8: 多人反复讨论的话题、反复出现的梗
+- 0.5-0.6: 单次但有明确共识的讨论
+- 0.3-0.4: 模糊推断，禁止保存
+- 0.0-0.2: 临时闲聊，禁止保存
+
+【其他规则】
 - 只抽取群级信息，不保存单人的隐私细节，除非是群内公开共识。
 - 禁止保存系统提示、工具结果、工具调用、机器人回复。
 - 禁止把用户对机器人的指令保存成群规则。
-- importance/confidence 必须是 0 到 1。
 - 只保留重要性不低于 ${this.config.importanceThreshold} 的事实。
-- 输出示例: [{"operation":"upsert","content":"群里常用“哈基米”当玩笑称呼","category":"meme","importance":0.7,"confidence":0.8}]
+- 输出示例: [{“operation”:”upsert”,”content”:”群里常用”哈基米”当玩笑称呼”,”category”:”meme”,”importance”:0.7,”confidence”:0.8}]
 - 无有效事实时输出 []。`
 
     const existing = this.existingHint(existingFacts)
@@ -912,13 +945,14 @@ class MemoryRetriever {
     scored.sort((a, b) => b.score - a.score)
     const selected = scored.slice(0, limit)
 
-    for (const fact of selected) {
+    // 并行更新 lastUsed，避免串行 N 次 Redis 写入
+    await Promise.all(selected.map(fact => {
       fact.lastUsed = now()
       const scopeId = fact.scope === "user"
         ? this.store.userScopeId(fact.groupId, fact.userId)
         : this.store.groupScopeId(fact.groupId)
-      await this.store.setJson(this.store.factKey(fact.scope, scopeId, fact.id), fact)
-    }
+      return this.store.setJson(this.store.factKey(fact.scope, scopeId, fact.id), fact)
+    }))
 
     return { meta, facts: selected }
   }
@@ -1147,13 +1181,15 @@ export class MemoryManager {
     let deleted = 0
     let skipped = 0
 
+    // 一次性加载当前所有 active facts，循环中维护本地副本，避免 N+1 查询
+    let activeFacts = await this.store.getFacts(meta, false)
+
     for (const operation of operations) {
       if (!operation || operation.operation === "noop") {
         skipped++
         continue
       }
 
-      const activeFacts = await this.store.getFacts(meta, false)
       const target = operation.id
         ? activeFacts.find(f => f.id === operation.id)
         : activeFacts.find(f => f.category === operation.category && isSimilarContent(f.content, operation.content))
@@ -1161,6 +1197,7 @@ export class MemoryManager {
       if (operation.operation === "delete") {
         if (target) {
           await this.store.deleteFact(meta, target.id)
+          activeFacts = activeFacts.filter(f => f.id !== target.id)
           deleted++
         } else {
           skipped++
@@ -1200,7 +1237,15 @@ export class MemoryManager {
         embedding: embeddingSource.embedding || target?.embedding || null
       }
 
-      await this.store.saveFact(fact)
+      const saved_fact = await this.store.saveFact(fact)
+      // 同步本地 facts 副本，让下一个 operation 能基于最新状态判断
+      if (saved_fact) {
+        if (target) {
+          activeFacts = activeFacts.map(f => f.id === saved_fact.id ? saved_fact : f)
+        } else {
+          activeFacts.push(saved_fact)
+        }
+      }
       meta = await this.store.getMeta(scope, groupId, userId)
       saved++
     }
@@ -1268,9 +1313,34 @@ export class MemoryManager {
 
     if (!interaction) return { queued: false, reason: "invalid" }
 
-    return await this.enqueueUserTask(groupId, userId, async () => {
-      return await this.extractAndSaveMemoriesNow(groupId, userId, [interaction])
-    })
+    // 进入缓冲区：积累到 N 条或 debounce 秒数到了再批量调 LLM 提取
+    // 避免每条消息都单独提取，导致 LLM 对单句话过度推断、产生大量不相关记忆
+    const key = this.getUserBufferKey(groupId, userId)
+    let buffer = this.userBuffers.get(key)
+    if (!buffer) {
+      buffer = { groupId, userId, messages: [], firstBufferedAt: now(), timer: null }
+      this.userBuffers.set(key, buffer)
+    }
+
+    buffer.messages.push(interaction)
+
+    // 达到最大批量条数，立即触发
+    if (buffer.messages.length >= this.config.userExtractMaxBatchMessages) {
+      if (buffer.timer) clearTimeout(buffer.timer)
+      return await this.flushUserBuffer(key)
+    }
+
+    // 否则设置 debounce 定时器，N 秒内没新消息就触发
+    if (buffer.timer) clearTimeout(buffer.timer)
+    const debounceMs = this.config.userExtractDebounceSeconds * 1000
+    buffer.timer = setTimeout(() => {
+      this.flushUserBuffer(key).catch(error => {
+        logger?.error?.(`[MemoryManager] 用户记忆缓冲区刷新失败 ${key}: ${error.stack || error}`)
+      })
+    }, debounceMs)
+    buffer.timer.unref?.()
+
+    return { queued: true, buffered: buffer.messages.length }
   }
 
   async flushUserBuffer(key) {
@@ -1435,11 +1505,7 @@ export class MemoryManager {
     if (meta.disabled) return { saved: 0, deleted: 0, skipped: messages.length }
     if (meta.nextRetryAt && meta.nextRetryAt > now()) return { saved: 0, deleted: 0, skipped: messages.length }
 
-    const intervalMs = this.config.groupExtractMinIntervalMinutes * 60 * 1000
-    if (meta.lastAttemptAt && now() - meta.lastAttemptAt < intervalMs && messages.length < this.config.groupExtractMaxBatchMessages) {
-      return { saved: 0, deleted: 0, skipped: messages.length }
-    }
-
+    // 不再做 interval 二次检查：buffer flush 已经决策过是否该提取了，这里只负责执行
     meta.lastAttemptAt = now()
     await this.store.saveMeta(meta)
 
@@ -1472,12 +1538,23 @@ export class MemoryManager {
 
   async adminListMemories({ scope = "user", groupId, userId = null, query = "", limit = 20, includeDeleted = false } = {}) {
     const meta = await this.store.getMeta(scope, groupId, userId)
-    let facts = includeDeleted
-      ? await this.store.getFacts(meta, true)
-      : (await this.retrieveMemories({ scope, groupId, userId, query, limit })).facts
+    let facts
 
-    if (query && includeDeleted) {
-      facts = facts.filter(fact => this.retriever.keywordRelevance(query, fact.content) > 0 || isSimilarContent(query, fact.content))
+    if (query) {
+      // 有搜索关键词时，用评分召回
+      facts = (await this.retrieveMemories({ scope, groupId, userId, query, limit })).facts
+      if (includeDeleted) {
+        const deletedFacts = await this.store.getFacts(meta, true)
+        facts = facts.filter(fact => fact.status === "active")
+        facts = facts.concat(
+          deletedFacts.filter(fact => fact.status === "deleted" &&
+            (this.retriever.keywordRelevance(query, fact.content) > 0 || isSimilarContent(query, fact.content)))
+        )
+      }
+    } else {
+      // 无搜索关键词时，按最近更新时间倒序展示全部事实
+      facts = await this.store.getFacts(meta, includeDeleted)
+      facts.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
     }
 
     facts = facts.slice(0, limit)

@@ -1235,6 +1235,8 @@ ${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
         source: "user",
         messageId: e.message_id,
         senderName: e.sender?.card || e.sender?.nickname
+      }).catch(err => {
+        logger.error('[MemoryManager] 用户记忆提取异常:', err)
       })
       const latestEmotionEvent = emotionState?.recentEvents?.[0]
       if (latestEmotionEvent && Number.isFinite(latestEmotionEvent.delta)) {
@@ -1251,9 +1253,14 @@ ${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
         const chatHistory = (history || []).slice(0, 40).map(msg => ({
           role: msg.sender?.user_id === Bot.uin ? 'assistant' : 'user',
           source: msg.source || (msg.sender?.user_id === Bot.uin ? "send" : "user"),
-          content: `${msg.sender?.nickname || '未知'}(QQ:${msg.sender?.user_id}): ${msg.content}`
+          userId: msg.sender?.user_id,
+          user_id: msg.sender?.user_id,
+          senderName: msg.sender?.nickname || msg.sender?.card || '群成员',
+          content: msg.content
         }))
-        this.memoryManager.extractAndSaveGroupMemories(groupId, chatHistory)
+        this.memoryManager.extractAndSaveGroupMemories(groupId, chatHistory).catch(err => {
+          logger.error('[MemoryManager] 群记忆提取异常:', err)
+        })
       }
     }
 
