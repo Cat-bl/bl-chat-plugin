@@ -1,5 +1,6 @@
 import { AbstractTool } from './AbstractTool.js';
 import { TotalTokens } from "../../functions/tools/CalculateToken.js";
+import { callAI } from "../../utils/apiClient.js";
 import fs from "fs";
 import YAML from "yaml";
 import path from "path";
@@ -118,22 +119,26 @@ export class SearchInformationTool extends AbstractTool {
       const configPath = path.join(process.cwd(), 'plugins/bl-chat-plugin/config/message.yaml');
       const configFile = fs.readFileSync(configPath, 'utf8');
       const config = YAML.parse(configFile).pluginSettings;
-      
+
       const apiUrl = config.searchAiConfig?.searchApiUrl || 'https://api.openai.com/v1/chat/completions'
       const apiKey = config.searchAiConfig?.searchApiKey || 'sk-xxxxxx'
+      const apiModel = config.searchAiConfig?.searchApiModel || 'deepseek-r1-search'
 
-      const requestData = { "model": config.searchAiConfig?.searchApiModel || 'deepseek-r1-search', "messages": [{ "role": "user", "content": "请联网搜索：" + query }], "stream": false }
-
-      const response = await fetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+      const result = await callAI(
+        {
+          url: apiUrl,
+          model: apiModel,
+          apikey: apiKey
         },
-        body: JSON.stringify(requestData),
-      })
+        [{ role: "user", content: "请联网搜索：" + query }],
+        { stream: false }
+      )
 
-      const content = await this.parseResponse(response)
+      if (result.error) {
+        return `搜索失败：${result.error}`
+      }
+
+      const content = result?.choices?.[0]?.message?.content || '未找到相关搜索结果'
       return content + '\n\n提示：如果用户想基于搜索结果制作文件，可以使用 aiMindMapTool 工具继续操作。'
 
     } catch (error) {

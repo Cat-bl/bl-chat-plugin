@@ -2,6 +2,8 @@
  * 表达学习管理器
  * 学习群友的说话风格，支持 AI 场景化学习
  */
+import { callAI } from "./apiClient.js"
+
 export class ExpressionLearner {
   constructor(config = {}) {
     this.REDIS_PREFIX = 'ytbot:expression:'
@@ -247,18 +249,16 @@ export class ExpressionLearner {
 
       if (!messageSample) return
 
-      const response = await fetch(memoryAiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${memoryAiApikey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+      const result = await callAI(
+        {
+          url: memoryAiUrl,
           model: memoryAiModel || 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: `分析以下群聊消息样本，提取群友的表达习惯。
+          apikey: memoryAiApikey
+        },
+        [
+          {
+            role: 'system',
+            content: `分析以下群聊消息样本，提取群友的表达习惯。
 
 【任务】
 归纳群友在不同情境下的常用表达方式，只提取有特色的、非通用的表达。
@@ -277,24 +277,24 @@ export class ExpressionLearner {
 - 最多返回 5 个场景
 - 无明显规律时返回 []
 - 只输出 JSON，不要其他内容`
-            },
-            {
-              role: 'user',
-              content: `群聊消息样本：\n${messageSample}`
-            }
-          ],
+          },
+          {
+            role: 'user',
+            content: `群聊消息样本：\n${messageSample}`
+          }
+        ],
+        {
           temperature: 0.3,
-          max_tokens: 400
-        })
-      })
+          maxTokens: 400
+        }
+      )
 
-      if (!response.ok) {
-        logger.error(`[表达学习] AI 请求失败: ${response.status}`)
+      if (result.error) {
+        logger.error(`[表达学习] AI 请求失败: ${result.error}`)
         return
       }
 
-      const data = await response.json()
-      let content = data?.choices?.[0]?.message?.content?.trim() || '[]'
+      let content = result?.choices?.[0]?.message?.content?.trim() || '[]'
 
       const jsonMatch = content.match(/\[[\s\S]*\]/)
       if (jsonMatch) {

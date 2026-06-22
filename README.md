@@ -5,7 +5,7 @@
 
 ### 本插件实际表现出来的能力取决于配置的模型。
 
-### 本插件工具调用、对话模型调用模型配置已兼容OpenAI与Anthropic 格式，详情请查看下方 模型服务配置 部分。
+### 本插件所有 AI 模型配置（除 embeddingAiConfig 外）均已兼容 OpenAI 与 Anthropic 格式，详情请查看下方 模型服务配置 部分。
 ---
 
 > [!TIP]
@@ -862,13 +862,22 @@ const result = await pluginBridge.instance?.enqueueProactiveTask(
 ## 模型服务配置
 
 ### 聊天跟踪判断模型配置 (`trackAiConfig`)
+
+**OpenAI 兼容格式**：
 ```yaml
 trackAiUrl: "https://api.openai.com/v1/chat/completions"
 trackAiModel: "gpt-4o-mini"
 trackAiApikey: "sk-xxxxx"
 ```
 
-> 此模型在 `strict` 模式下用作"是否在跟机器人对话"的批量判官；在 `smart` 模式下用作 Timing Gate 子代理（输出 continue/no_action/wait 三选一）。两种用途都只输出极少 token，推荐用 gpt-4o-mini / gemini-2.0-flash / claude haiku 等小模型。
+**Anthropic 格式**（自动识别）：
+```yaml
+trackAiUrl: "https://api.anthropic.com/v1/messages"
+trackAiModel: "claude-3-5-haiku-20241022"
+trackAiApikey: "sk-ant-xxxxx"
+```
+
+> **说明**：此模型在 `strict` 模式下用作"是否在跟机器人对话"的批量判官；在 `smart` 模式下用作 Timing Gate 子代理（输出 continue/no_action/wait 三选一）。两种用途都只输出极少 token，推荐用 gpt-4o-mini / gemini-2.0-flash / claude-3-5-haiku 等小模型。插件会根据 URL 自动识别 API 格式。
 
 ### 工具调用模型配置 (`toolsAiConfig`)
 
@@ -907,37 +916,78 @@ chatApiKey: "sk-ant-xxxxx"
 > **说明**：插件会根据 URL 自动识别 API 格式。如果 URL 包含 `/v1/messages`，自动切换为 Anthropic 格式（`max_tokens` 为 16000，并默认开启自适应思考 `thinking: adaptive`；模型不支持思考时会自动去掉该参数重试，不影响使用）；否则使用 OpenAI 格式。
 
 ### 图像编辑模型配置 (`imageEditAiConfig`)
+
+**OpenAI 兼容格式**：
 ```yaml
 imageEditApiUrl: "https://api.openai.com/v1/chat/completions"
 imageEditApiModel: "gemini-3-pro-image-preview"
 imageEditApiKey: "sk-xxxxx"
 ```
 
+**Anthropic 格式**（自动识别）：
+```yaml
+imageEditApiUrl: "https://api.anthropic.com/v1/messages"
+imageEditApiModel: "claude-3-5-sonnet-20241022"
+imageEditApiKey: "sk-ant-xxxxx"
+```
+
+> **说明**：用于图片编辑和文生图功能。插件会根据 URL 自动识别 API 格式，自动处理多模态消息转换（OpenAI `image_url` ↔ Anthropic `image` 格式）。
+
 ### 图像识别模型配置 (`analysisAiConfig`)
+
+**OpenAI 兼容格式**：
 ```yaml
 analysisApiUrl: "https://api.openai.com/v1/chat/completions"
 analysisApiModel: "gemini-3-pro-preview"
 analysisApiKey: "sk-xxxxx"
 ```
 
+**Anthropic 格式**（自动识别）：
+```yaml
+analysisApiUrl: "https://api.anthropic.com/v1/messages"
+analysisApiModel: "claude-3-5-sonnet-20241022"
+analysisApiKey: "sk-ant-xxxxx"
+```
+
+> **说明**：用于图片识别和分析功能。插件会根据 URL 自动识别 API 格式，自动处理多模态消息转换。
+
 ### 联网搜索模型配置 (`searchAiConfig`)
+
+**OpenAI 兼容格式**：
 ```yaml
 searchApiUrl: "https://api.openai.com/v1/chat/completions"
 searchApiModel: "deepseek-r1-search"
 searchApiKey: "sk-xxxxx"
 ```
 
+**Anthropic 格式**（自动识别）：
+```yaml
+searchApiUrl: "https://api.anthropic.com/v1/messages"
+searchApiModel: "claude-3-5-sonnet-20241022"
+searchApiKey: "sk-ant-xxxxx"
+```
+
+> **说明**：用于联网搜索工具。插件会根据 URL 自动识别 API 格式。
+
 ### 记忆提取模型配置 (`memoryAiConfig`)
 
 > ⚠️ **仅在开启 `memorySystem.enabled: true` 时需要配置**
 
+**OpenAI 兼容格式**：
 ```yaml
 memoryAiUrl: "https://api.openai.com/v1/chat/completions"
 memoryAiModel: "gpt-4o-mini"    # 推荐使用小模型，省钱且响应快
 memoryAiApikey: "sk-xxxxx"
 ```
 
-**说明**：用户记忆会在对话结束后立即异步调用此模型；群记忆会批量整理后再调用此模型，提取值得长期保存的事实。推荐使用 `gpt-4o-mini`、`gemini-2.0-flash` 等小模型。
+**Anthropic 格式**（自动识别）：
+```yaml
+memoryAiUrl: "https://api.anthropic.com/v1/messages"
+memoryAiModel: "claude-3-5-haiku-20241022"
+memoryAiApikey: "sk-ant-xxxxx"
+```
+
+> **说明**：用户记忆会在对话结束后立即异步调用此模型；群记忆会批量整理后再调用此模型，提取值得长期保存的事实。推荐使用 `gpt-4o-mini`、`gemini-2.0-flash`、`claude-3-5-haiku` 等小模型。插件会根据 URL 自动识别 API 格式。
 
 ### Embedding 模型配置 (`embeddingAiConfig`)
 

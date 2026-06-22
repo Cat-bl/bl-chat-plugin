@@ -1,6 +1,7 @@
 import { AbstractTool } from './AbstractTool.js';
 import { getBase64Image, normalizeImageUrls } from '../../utils/fileUtils.js';
 import { dependencies } from "../../dependence/dependencies.js";
+import { callAI } from "../../utils/apiClient.js";
 import fs from "fs";
 import YAML from "yaml";
 import path from "path";
@@ -48,21 +49,22 @@ export class GoogleImageEditTool extends AbstractTool {
             // 调用API
             const { imageEditApiUrl, imageEditApiKey, imageEditApiModel } = config.imageEditAiConfig || {};
 
-            const response = await fetch(imageEditApiUrl || 'https://api.openai.com/v1/chat/completions', {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${imageEditApiKey || 'sk-xxxxxx'}`,
-                },
-                body: JSON.stringify({
+            const result = await callAI(
+                {
+                    url: imageEditApiUrl || 'https://api.openai.com/v1/chat/completions',
                     model: imageEditApiModel || "gemini-3-pro-image-preview",
-                    messages: [{ role: "user", content }],
-                    stream: false,
-                }),
-            });
+                    apikey: imageEditApiKey || 'sk-xxxxxx'
+                },
+                [{ role: "user", content }],
+                { stream: false }
+            )
+
+            if (result.error) {
+                return { error: `图片编辑失败: ${result.error}` }
+            }
 
             // 自动检测并处理响应
-            const imageUrl = await this.parseResponse(response);
+            const imageUrl = result?.choices?.[0]?.message?.content || ''
 
             const processedUrl = this.extractImageUrl(imageUrl);
 

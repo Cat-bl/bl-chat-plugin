@@ -4,6 +4,7 @@
 //   禁言缓存、回复 debounce、批量"是否在和 bot 说话"判断
 // 以 mixin 形式挂到插件原型上，this 指向插件实例。
 import { extractChatKeywords, isQuestionMessage, isFeedbackMessage } from "./chatHeuristics.js"
+import { callAI } from "../utils/apiClient.js"
 
 // 会话追踪: key: `${groupId}_${userId}`, value: { lastActiveTime, chatHistory: [], timer: null }
 // （handleRandomReply / handleTextResponse 也会读写，故导出）
@@ -844,25 +845,21 @@ ${specialSignalsBlock}
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 15000)
     try {
-      const response = await fetch(useCfg.url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${useCfg.apikey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: useCfg.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.3
-        }),
-        signal: controller.signal
-      })
-      if (!response.ok) return { decision: 'no_action', reason: `http_${response.status}` }
-      const data = await response.json()
-      const raw = data?.choices?.[0]?.message?.content?.trim() || ''
+      const result = await callAI(
+        useCfg,
+        [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        {
+          temperature: 0.3,
+          signal: controller.signal
+        }
+      )
+
+      if (result.error) return { decision: 'no_action', reason: `api_error:${result.error}` }
+
+      const raw = result?.choices?.[0]?.message?.content?.trim() || ''
       const jsonMatch = raw.match(/\{[\s\S]*\}/)
       if (!jsonMatch) return { decision: 'no_action', reason: 'no_json' }
       const parsed = JSON.parse(jsonMatch[0])
@@ -1029,18 +1026,16 @@ ${specialSignalsBlock}
         ? chatHistory.map(h => `[${h.role === 'bot' ? '机器人' : '用户'}] ${h.content}`).join('\n')
         : '(无历史记录)'
 
-      const response = await fetch(this.config.trackAiConfig.trackAiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.config.trackAiConfig.trackAiApikey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+      const result = await callAI(
+        {
+          url: this.config.trackAiConfig.trackAiUrl,
           model: this.config.trackAiConfig.trackAiModel,
-          messages: [
-            {
-              role: "system",
-              content: `你是QQ群聊对话判断助手。机器人名字叫"${botName}"，QQ号${Bot.uin}。
+          apikey: this.config.trackAiConfig.trackAiApikey
+        },
+        [
+          {
+            role: "system",
+            content: `你是QQ群聊对话判断助手。机器人名字叫"${botName}"，QQ号${Bot.uin}。
 
 根据对话历史，判断用户新消息是否在继续跟机器人对话。
 
@@ -1057,19 +1052,17 @@ ${specialSignalsBlock}
 
 你只回复 true 或 false，不要输出其他内容。
 `
-            },
-            {
-              role: "user",
-              content: `【近期对话记录】\n${historyText}\n\n【用户新消息】\n${userMessage}\n\n这条新消息是在跟机器人说话吗？`
-            }
-          ]
-        })
-      })
+          },
+          {
+            role: "user",
+            content: `【近期对话记录】\n${historyText}\n\n【用户新消息】\n${userMessage}\n\n这条新消息是在跟机器人说话吗？`
+          }
+        ]
+      )
 
-      if (!response.ok) return false // 请求失败时默认不触发
+      if (result.error) return false // 请求失败时默认不触发
 
-      const data = await response.json()
-      const answer = data?.choices?.[0]?.message?.content?.toLowerCase()?.trim()
+      const answer = result?.choices?.[0]?.message?.content?.toLowerCase()?.trim()
       // logger.error(answer, historyText, userMessage, 8888)
       return answer === 'true' || answer?.includes('true')
     } catch (error) {
@@ -1139,18 +1132,16 @@ ${recentHistory || '(无)'}
 ---`
       }).join('\n\n')
 
-      const response = await fetch(this.config.trackAiConfig.trackAiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.config.trackAiConfig.trackAiApikey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+      const result = await callAI(
+        {
+          url: this.config.trackAiConfig.trackAiUrl,
           model: this.config.trackAiConfig.trackAiModel,
-          messages: [
-            {
-              role: "system",
-              content: `你是QQ群聊对话判断助手。机器人名字叫"${botName}"。
+          apikey: this.config.trackAiConfig.trackAiApikey
+        },
+        [
+          {
+            role: "system",
+            content: `你是QQ群聊对话判断助手。机器人名字叫"${botName}"。
 
 每条消息来自不同用户，有独立的对话历史，请分别独立判断。
 
@@ -1169,22 +1160,20 @@ ${recentHistory || '(无)'}
 返回JSON对象，key为消息ID，value为判断结果。
 示例: {"MSG_1_12345": true, "MSG_2_67890": false}
 只返回JSON对象，不要其他内容。`
-            },
-            {
-              role: "user",
-              content: `分别判断以下${batchWithIds.length}条来自不同用户的消息:\n\n${messagesText}\n\n返回JSON对象:`
-            }
-          ]
-        })
-      })
+          },
+          {
+            role: "user",
+            content: `分别判断以下${batchWithIds.length}条来自不同用户的消息:\n\n${messagesText}\n\n返回JSON对象:`
+          }
+        ]
+      )
 
-      if (!response.ok) {
-        logger.error('[批量判断] API请求失败')
+      if (result.error) {
+        logger.error('[批量判断] API请求失败:', result.error)
         return this.fallbackToSingleJudgment(batch)
       }
 
-      const data = await response.json()
-      let content = data?.choices?.[0]?.message?.content?.trim() || '{}'
+      let content = result?.choices?.[0]?.message?.content?.trim() || '{}'
 
       // 提取JSON对象
       const jsonMatch = content.match(/\{[\s\S]*\}/)

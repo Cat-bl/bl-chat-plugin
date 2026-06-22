@@ -2,6 +2,9 @@ import { dependencies } from "../dependence/dependencies.js";
 import { removeToolPromptsFromMessages } from "../utils/textUtils.js"
 const { _path, fetch, fs, path } = dependencies;
 
+// logger 引用（假设全局可用，否则需要 import）
+const logger = global.logger || console;
+
 /**
  * 生成动态的客户端版本标识（基于当前日期）
  * @returns {Object} 包含 anthropicVersion 和 clientVersion 的对象
@@ -452,10 +455,35 @@ function convertToAnthropicFormat(requestData, originalRequestData) {
                 }]
             }
         } else {
-            // 普通消息
-            convertedMsg = {
-                role: msg.role,
-                content: String(msg.content || '')
+            // 普通消息（可能包含多模态内容）
+            if (Array.isArray(msg.content)) {
+                // 多模态消息：转换 image_url 为 Anthropic 的 image 格式
+                const convertedContent = []
+                for (const block of msg.content) {
+                    if (block.type === 'text') {
+                        convertedContent.push({ type: 'text', text: block.text || '' })
+                    } else if (block.type === 'image_url') {
+                        // OpenAI image_url -> Anthropic image
+                        const imageUrl = block.image_url?.url || block.url || ''
+                        const imageBlock = convertImageUrlToAnthropicFormat(imageUrl)
+                        if (imageBlock) {
+                            convertedContent.push(imageBlock)
+                        }
+                    } else {
+                        // 其他类型保持不变
+                        convertedContent.push(block)
+                    }
+                }
+                convertedMsg = {
+                    role: msg.role,
+                    content: convertedContent.length > 0 ? convertedContent : [{ type: 'text', text: '' }]
+                }
+            } else {
+                // 纯文本消息
+                convertedMsg = {
+                    role: msg.role,
+                    content: String(msg.content || '')
+                }
             }
         }
 
@@ -523,11 +551,12 @@ function convertToAnthropicFormat(requestData, originalRequestData) {
  * @param {Object} requestData - 请求体对象
  * @returns {Promise<{response: Response, errorText: string|null}>} errorText 仅在最终响应失败时填充
  */
-async function fetchWithThinkingFallback(url, headers, requestData) {
+async function fetchWithThinkingFallback(url, headers, requestData, signal) {
     const send = (body) => fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal
     })
 
     const response = await send(requestData)
@@ -549,6 +578,43 @@ async function fetchWithThinkingFallback(url, headers, requestData) {
         response: retryResponse,
         errorText: retryResponse.ok ? null : await retryResponse.text().catch(() => '无法读取错误内容')
     }
+}
+
+/**
+ * 将 OpenAI 的 image_url 格式转换为 Anthropic 的 image 格式
+ * @param {string} imageUrl - 图片 URL（支持 http(s):// 或 data:image/...;base64,... 格式）
+ * @returns {Object|null} Anthropic image block 或 null
+ */
+function convertImageUrlToAnthropicFormat(imageUrl) {
+    if (!imageUrl || typeof imageUrl !== 'string') return null
+
+    // 处理 base64 data URL
+    if (imageUrl.startsWith('data:image/')) {
+        const match = imageUrl.match(/^data:image\/([^;]+);base64,(.+)$/)
+        if (match) {
+            const [, format, data] = match
+            // 映射常见格式到 MIME type
+            const mimeType = `image/${format}`
+            return {
+                type: 'image',
+                source: {
+                    type: 'base64',
+                    media_type: mimeType,
+                    data: data
+                }
+            }
+        }
+    }
+
+    // 处理普通 URL（Anthropic 也支持，但需要用 URL 类型）
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+        // 注意：Anthropic API 的 image source 只支持 base64，不支持 URL
+        // 这里返回 null，调用方需要先下载图片转为 base64
+        logger.warn('[convertImageUrlToAnthropicFormat] Anthropic 不支持直接传 URL，需要先转为 base64')
+        return null
+    }
+
+    return null
 }
 
 /**
@@ -607,6 +673,174 @@ function convertFromAnthropicFormat(anthropicResponse) {
     }
 
     return openaiResponse
+}
+
+/**
+ * 通用 AI API 调用函数
+ * 自动检测 API 格式（OpenAI/Anthropic），转换请求和响应，支持流式和非流式
+ *
+ * @param {Object} config - API 配置 { url, model, apikey }
+ * @param {Array} messages - OpenAI 格式的消息数组
+ * @param {Object} options - 可选参数
+ * @param {number} [options.maxTokens] - 最大 token 数
+ * @param {number} [options.temperature] - 温度参数
+ * @param {Array} [options.tools] - 工具定义（OpenAI 格式）
+ * @param {boolean} [options.stream] - 是否流式响应
+ * @param {AbortSignal} [options.signal] - 用于取消请求的 AbortSignal
+ * @param {Object} [options.additionalParams] - 其他额外的请求体参数
+ * @returns {Promise<Object>} 返回 OpenAI 格式的响应对象，或 { error: string }
+ */
+export async function callAI(config, messages, options = {}) {
+    const {
+        maxTokens,
+        temperature,
+        tools,
+        stream = false,
+        signal,
+        additionalParams = {}
+    } = options
+
+    // 验证配置
+    if (!config?.url || !config?.model || !config?.apikey) {
+        return { error: 'API 配置不完整，需要 url、model、apikey' }
+    }
+
+    // 检测 API 格式
+    const apiFormat = detectApiFormat(config.url)
+
+    try {
+        // 构建请求头
+        const headers = {
+            'Authorization': `Bearer ${config.apikey}`,
+            'Content-Type': 'application/json'
+        }
+
+        // 构建基础请求体（OpenAI 格式）
+        let requestData = {
+            model: config.model,
+            messages: messages,
+            stream: stream,
+            ...additionalParams
+        }
+
+        if (maxTokens !== undefined) requestData.max_tokens = maxTokens
+        if (temperature !== undefined) requestData.temperature = temperature
+        if (tools && tools.length > 0) requestData.tools = tools
+
+        // 根据格式转换请求
+        if (apiFormat === 'anthropic') {
+            // 应用 Claude Code 请求头（伪装为官方 CLI）
+            applyClaudeCodeHeaders(headers)
+
+            // 转换为 Anthropic 格式（自动添加 system 身份串、metadata、thinking 等伪装字段）
+            try {
+                requestData = convertToAnthropicFormat(requestData, requestData)
+            } catch (convertError) {
+                logger.error('[callAI] Anthropic 请求格式转换失败:', convertError)
+                return { error: `请求格式转换失败：${convertError.message}` }
+            }
+        }
+
+        // 发送请求（signal 单独传递，不进 body）
+        const result = await fetchWithThinkingFallback(config.url, headers, requestData, signal)
+        const response = result.response
+
+        if (!response.ok) {
+            logger.error(`[callAI] API 请求失败：${response.status} ${response.statusText} - ${result.errorText}`)
+            return { error: `API 请求失败：${response.status} ${response.statusText}` }
+        }
+
+        // 处理流式响应
+        if (stream) {
+            return handleStreamResponseUnified(response, apiFormat)
+        }
+
+        // 处理非流式响应
+        let responseData
+        try {
+            responseData = await response.json()
+        } catch (jsonError) {
+            logger.error('[callAI] 解析响应 JSON 失败:', jsonError)
+            return { error: `解析响应 JSON 失败：${jsonError.message}` }
+        }
+
+        // 转换 Anthropic 响应为 OpenAI 格式
+        if (apiFormat === 'anthropic') {
+            try {
+                responseData = convertFromAnthropicFormat(responseData)
+            } catch (convertError) {
+                logger.error('[callAI] Anthropic 响应格式转换失败:', convertError)
+                return { error: `响应格式转换失败：${convertError.message}` }
+            }
+        }
+
+        return processResponse(responseData)
+
+    } catch (error) {
+        logger.error('[callAI] 调用异常:', error)
+        return { error: `调用异常：${error.message}` }
+    }
+}
+
+/**
+ * 统一处理流式响应（兼容 OpenAI 和 Anthropic SSE 格式）
+ * @param {Response} response - fetch 响应对象
+ * @param {string} apiFormat - 'openai' 或 'anthropic'
+ * @returns {Promise<string>} 拼接后的完整文本内容
+ */
+async function handleStreamResponseUnified(response, apiFormat) {
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let content = ''
+
+    try {
+        while (true) {
+            const { value, done } = await reader.read()
+            if (done) break
+
+            const chunk = decoder.decode(value, { stream: true })
+            for (const line of chunk.split('\n')) {
+                if (!line.startsWith('data: ')) continue
+                const dataStr = line.slice(6).trim()
+                if (dataStr === '[DONE]') break
+
+                try {
+                    const data = JSON.parse(dataStr)
+
+                    if (apiFormat === 'anthropic') {
+                        // Anthropic 流式格式
+                        if (data.type === 'content_block_delta' && data.delta?.text) {
+                            content += data.delta.text
+                        }
+                    } else {
+                        // OpenAI 流式格式
+                        const delta = data?.choices?.[0]?.delta?.content
+                        if (delta) content += delta
+                    }
+                } catch (parseError) {
+                    // 跳过解析失败的行
+                }
+            }
+        }
+
+        if (!content) {
+            throw new Error('未接收到有效内容')
+        }
+
+        // 返回 OpenAI 格式的响应对象
+        return {
+            choices: [{
+                message: {
+                    role: 'assistant',
+                    content: content
+                },
+                finish_reason: 'stop'
+            }]
+        }
+    } catch (error) {
+        logger.error('[handleStreamResponseUnified] 流式响应处理失败:', error)
+        return { error: `流式响应处理失败：${error.message}` }
+    }
 }
 
 function processResponse(responseData) {
