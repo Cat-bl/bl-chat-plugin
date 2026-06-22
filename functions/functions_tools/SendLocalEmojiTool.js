@@ -91,7 +91,14 @@ export class SendLocalEmojiTool extends AbstractTool {
         const maxMs = Math.max(minMs, Number(cfg.followUpDelayMaxMs) || 800)
         await sleep(Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs)
       }
-      await e.reply(segment.image(`file://${absPath}`))
+      await e.reply({
+        type: "image",
+        data: {
+          file: `file://${absPath}`,
+          sub_type: 1,
+          summary: "[动画表情]"
+        }
+      })
       emojiPackManager.recordPick(groupId, item.hash, item.tags || [])
       emojiPackManager.recordSend(groupId)
       emojiPackManager.markUsed(item.hash).catch(() => {})
