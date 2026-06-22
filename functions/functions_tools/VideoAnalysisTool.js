@@ -69,7 +69,7 @@ export class VideoAnalysisTool extends AbstractTool {
         body: JSON.stringify(requestData),
       })
 
-      return await response.json()
+      return await this.parseResponse(response)
     } catch (error) {
       console.error("Video方法错误:", error)
       return { error: "视频处理失败: " + error.message }
@@ -196,15 +196,90 @@ export class VideoAnalysisTool extends AbstractTool {
         return { error: "视频分析失败: 当前消息和引用消息里都没找到视频" }
       }
       const prompt = (opts?.prompt || e.msg || "请分析这个视频内容").toString().trim() || "请分析这个视频内容"
-      const res = await this.Video(prompt, video)
+      const content = await this.Video(prompt, video)
 
-      if (res?.choices) {
-        return { analysis: res.choices[0]?.message?.content }
+      if (content && typeof content === 'string') {
+        return { analysis: content }
       }
       return { error: "识别失败,可能是含有违规内容" }
     } catch (error) {
       logger.error?.("[VideoAnalysisTool] 分析过程异常:", error)
       return { error: `视频分析失败: ${error.message}` }
     }
+  }
+
+  // 自动检测并解析响应（兼容流式 + 非流式）
+  async parseResponse(response) {
+    if (!response.ok) {
+      throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+
+    // 检测流式响应（优先级高，避免先 json() 消费 body）
+    if (contentType.includes('text/event-stream') || contentType.includes('stream')) {
+      return await this.handleStreamResponse(response);
+    }
+
+    // 检测 JSON 响应
+    if (contentType.includes('application/json')) {
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content || '';
+    }
+
+    // Content-Type 未明确时，先读 body 一次性判断
+    const text = await response.text();
+    // 尝试按 SSE 格式解析
+    if (text.includes('data: ')) {
+      return this.parseSSEText(text);
+    }
+    // 尝试按 JSON 解析
+    try {
+      const data = JSON.parse(text);
+      return data.choices?.[0]?.message?.content || '';
+    } catch {
+      throw new Error('无法解析响应格式');
+    }
+  }
+
+  // 从已读取的文本中解析 SSE 格式
+  parseSSEText(text) {
+    let content = "";
+    for (const line of text.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      const dataStr = line.slice(6).trim();
+      if (dataStr === "[DONE]") break;
+      try {
+        const data = JSON.parse(dataStr);
+        content += data?.choices?.[0]?.delta?.content || "";
+      } catch { }
+    }
+    if (!content) throw new Error("未接收到有效内容");
+    return content;
+  }
+
+  async handleStreamResponse(response) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let content = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      for (const line of decoder.decode(value).split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        const dataStr = line.slice(6).trim();
+        if (dataStr === "[DONE]") break;
+
+        try {
+          const data = JSON.parse(dataStr);
+          content += data?.choices?.[0]?.delta?.content || "";
+        } catch { }
+      }
+    }
+
+    if (!content) throw new Error("未接收到有效内容");
+    return content;
   }
 }

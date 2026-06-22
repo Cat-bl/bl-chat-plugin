@@ -33,7 +33,6 @@ export class BananaTool extends AbstractTool {
   }
 
   async func(opts, e) {
-    const STREAM = false;
     const config = this.loadConfig();
     const { prompt, images: rawImages } = opts;
 
@@ -56,14 +55,11 @@ export class BananaTool extends AbstractTool {
         body: JSON.stringify({
           model: model || "gemini-3-pro-image-preview",
           messages: [{ role: "user", content: imgurls }],
-          stream: STREAM,
+          stream: false,
         }),
       });
 
-      const imageUrl = STREAM
-        ? await this.handleStreamResponse(response)
-        : await this.handleNormalResponse(response);
-
+      const imageUrl = await this.parseResponse(response);
       const processedUrl = this.extractImageUrl(imageUrl);
 
       if (processedUrl) {
@@ -108,6 +104,57 @@ export class BananaTool extends AbstractTool {
       );
     }
     return messages;
+  }
+
+  // 自动检测并解析响应（兼容流式 + 非流式）
+  async parseResponse(response) {
+    if (!response.ok) {
+      throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+
+    // 检测流式响应（优先级高，避免先 json() 消费 body）
+    if (contentType.includes('text/event-stream') || contentType.includes('stream')) {
+      return await this.handleStreamResponse(response);
+    }
+
+    // 检测 JSON 响应
+    if (contentType.includes('application/json')) {
+      return await this.handleNormalResponse(response);
+    }
+
+    // Content-Type 未明确时，先读 body 一次性判断
+    const text = await response.text();
+    // 尝试按 SSE 格式解析
+    if (text.includes('data: ')) {
+      return this.parseSSEText(text);
+    }
+    // 尝试按 JSON 解析
+    try {
+      const data = JSON.parse(text);
+      return data?.choices?.[0]?.message?.images?.[0]?.image_url?.url ||
+        data?.choices?.[0]?.message?.images?.[0]?.url ||
+        data?.choices?.[0]?.message?.content;
+    } catch {
+      throw new Error('无法解析响应格式');
+    }
+  }
+
+  // 从已读取的文本中解析 SSE 格式
+  parseSSEText(text) {
+    let content = "";
+    for (const line of text.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      const dataStr = line.slice(6).trim();
+      if (dataStr === "[DONE]") break;
+      try {
+        const data = JSON.parse(dataStr);
+        content += data?.choices?.[0]?.delta?.content || "";
+      } catch { }
+    }
+    if (!content) throw new Error("未接收到有效内容");
+    return content;
   }
 
   // 处理流式响应
