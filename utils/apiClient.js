@@ -772,11 +772,22 @@ export async function callAI(config, messages, options = {}) {
             return { error: `API 请求失败：${response.status} ${response.statusText}` }
         }
 
-        // 处理流式响应（用户主动传 stream: true，或服务端返回了 SSE Content-Type）
+        // 处理流式响应
+        // - 用户主动传 stream: true 时，走真正的流式 reader（必要时模型可以早返回）
+        // - 服务端返回 SSE Content-Type 但用户没传 stream:true 时，body 可能不是 ReadableStream
+        //   （部分 fetch 实现/中转代理会先缓存完整响应），统一走 text() 兜底解析更稳
         const contentType = response.headers.get('content-type') || ''
         const isSSE = contentType.includes('text/event-stream') || contentType.includes('stream')
-        if (stream || isSSE) {
+
+        if (stream) {
+            // 用户主动流式：走真正的流式 reader
             return handleStreamResponseUnified(response, apiFormat)
+        }
+
+        if (isSSE) {
+            // 服务端强返 SSE：先读 text 再解析，避免 body.getReader 不可用的兼容性问题
+            const sseText = await response.text()
+            return parseSSETextUnified(sseText, apiFormat)
         }
 
         // 处理非流式响应：先读 text，再判断是 JSON 还是 SSE（兜底）
