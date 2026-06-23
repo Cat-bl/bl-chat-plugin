@@ -27,7 +27,7 @@ export class PokeTool extends AbstractTool {
         },
         random: {
           type: 'boolean',
-          description: '是否随机选择群成员进行戳一戳，默认为 true。启用时忽略 target 参数',
+          description: '是否随机选择群成员进行戳一戳，默认为 false。启用时忽略 target 参数',
           default: false
         }
       }
