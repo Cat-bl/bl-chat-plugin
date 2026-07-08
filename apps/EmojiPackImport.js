@@ -372,12 +372,9 @@ export class EmojiPackPlugin extends plugin {
     }
     let deletedFiles = 0
     try {
-      // 1. 先取消 pendingWriteTimer，避免清空期间 markUsed 的 2s 节流写回脏数据
-      if (emojiPackManager.pendingWriteTimer) {
-        clearTimeout(emojiPackManager.pendingWriteTimer)
-        emojiPackManager.pendingWriteTimer = null
-        emojiPackManager.pendingItems = null
-      }
+      // 1. 等 writeQueue 排空：markUsed / addFromBuffer 都走串行队列，
+      //    清空前等它们写完，否则清空后一个在途写回会复活 ndjson
+      await emojiPackManager.writeQueue
       // 2. 删 ndjson
       await fs.promises.unlink(emojiPackManager.dbPath).catch(() => {})
       // 3. 删 storeDir 下所有图片文件
