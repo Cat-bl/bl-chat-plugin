@@ -33,7 +33,7 @@ export default [
     field: "concurrentLimit",
     label: "并发数限制",
     component: "InputNumber",
-    bottomHelpMessage: "同时处理的最大请求数量",
+    bottomHelpMessage: "同一群聊同时处理的最大对话数，达到上限时新消息直接不触发（不排队）",
     componentProps: { min: 1, max: 20, placeholder: "3" }
   },
   {

@@ -3,23 +3,15 @@
 // 同一条用户消息触发的多个工具（无论一轮并行还是多轮串行）聚合成一条 record。
 // 内存 Map + redis 双层缓存，与 taskStatus 同构。
 // 以 mixin 形式挂到插件原型上，this 指向插件实例（依赖 this.config）。
+// 成败判定用 hasExplicitErrorMarker（严格版，零误判），不用带中文模糊匹配的 isToolResultError。
+
+import { hasExplicitErrorMarker } from "./toolResult.js"
 
 const TOOL_HISTORY_PREFIX = "ytbot:tool_history:"
 const toolHistoryCache = new Map()
 
 // 终态工具中只有 textImageTool 值得作为执行历史；waitTool / sendLocalEmojiTool 价值低且会刷屏
 const TOOL_HISTORY_SKIP_TOOL_NAMES = new Set(["waitTool", "sendLocalEmojiTool"])
-
-// 不复用 chat.js 的 isToolResultError —— 后者用中文模糊匹配会误判（结果里出现"错误/失败"两字就被判败）。
-// 这里只识别约定俗成的 "error: " 前缀和显式 "error" JSON 字段。
-function isFailureResult(text) {
-  if (typeof text !== "string") return false
-  const trimmed = text.trim()
-  if (!trimmed) return false
-  if (/^error[:：]/i.test(trimmed)) return true
-  if (/"error"\s*:/.test(trimmed)) return true
-  return false
-}
 
 function truncateResult(text, max) {
   const s = typeof text === "string" ? text : String(text ?? "")
@@ -107,7 +99,7 @@ export const toolHistoryMethods = {
       .filter(it => it && it.toolName && !this.shouldSkipToolHistory(it.toolName))
       .map(it => ({
         toolName: it.toolName,
-        success: !isFailureResult(it.result),
+        success: !hasExplicitErrorMarker(it.result),
         result: truncateResult(it.result, maxResultLength)
       }))
     if (!subItems.length) return

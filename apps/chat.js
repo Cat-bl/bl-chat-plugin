@@ -11,8 +11,10 @@ import path from "path"
 import { randomUUID } from "crypto"
 import schedule from 'node-schedule'
 import { parseToolConfigEntry } from "../core/toolConfig.js"
+import { isToolResultError } from "../core/toolResult.js"
+import { buildChatSystemPrompt } from "../core/prompts.js"
 import { initializeSharedState, getSharedState, refreshLocalTools, applyToolRegistrySnapshot } from "../core/sharedState.js"
-import { delay, getOrCreateGroupLimiter } from "../core/asyncUtils.js"
+import { delay } from "../core/asyncUtils.js"
 import { configManagerMethods } from "../core/configManager.js"
 import { taskStatusMethods } from "../core/taskStatus.js"
 import { toolHistoryMethods } from "../core/toolHistory.js"
@@ -25,6 +27,10 @@ const _path = process.cwd()
 
 
 const activeDedupeToolRuns = new Map()
+
+// 群级并发计数：groupId -> 处理中的对话数。达到 concurrentLimit 时新消息直接不触发（不排队）。
+// 必须放模块级：Yunzai 每条消息都会 new 一个插件实例，实例属性跨消息不共享。
+const activeGroupChatCounts = new Map()
 
 let pluginInitialized = false
 let mcpInitPromise = null
@@ -44,8 +50,10 @@ export class ChatPlugin extends plugin {
       ]
     })
 
-    this.initConfig()
-    const state = initializeSharedState(this.config)
+    // 配置发生全量重载（首启/mtime 变化/chokidar 丢事件后的兜底）时刷新共享子系统，
+    // 否则直接复用进程级单例（Yunzai 每条消息都会实例化本类）
+    const configReloaded = this.initConfig()
+    const state = (!configReloaded && getSharedState()) || initializeSharedState(this.config)
 
     this.messageManager = state.messageManager
     this.toolInstances = state.toolInstances
@@ -59,13 +67,14 @@ export class ChatPlugin extends plugin {
     this.REDIS_KEY_PREFIX = 'ytbot:messages:'
     this.TASK_STATUS_PREFIX = 'ytbot:tool_task_status:'
     this.dedupeToolNames = new Set()
-    this._groupLimiters = new Map()
 
     this.localToolsReady = false
     this.tools = []
     this.initMessageHistory()
     mcpManager.setToolsChangedCallback(() => this.updateToolsList())
-    this.localToolsReadyPromise = this.refreshLocalToolRegistry({ force: true }).catch(error => {
+    // 不加 force：注册器内部有 5s 节流 + 并发去重，首次启动时会与 sharedState 的强制加载合并；
+    // 之前每条消息都强制重扫 custom_tools 目录，纯属浪费
+    this.localToolsReadyPromise = this.refreshLocalToolRegistry({ silent: true }).catch(error => {
       logger.error("[LocalToolRegistry] 启动加载本地工具失败:", error)
       this.localToolsReady = true
       this.initTools()
@@ -118,7 +127,8 @@ export class ChatPlugin extends plugin {
     this.messageHistoriesDir = path.join(process.cwd(), "data/AItools/user_history")
     this.MAX_HISTORY = this.config.groupMaxMessages || 100
 
-    if (!fs.existsSync(this.messageHistoriesDir)) {
+    // 目录只需保证一次；pluginInitialized 在首个实例构造完成后置 true
+    if (!pluginInitialized && !fs.existsSync(this.messageHistoriesDir)) {
       fs.mkdirSync(this.messageHistoriesDir, { recursive: true })
     }
   }
@@ -283,9 +293,15 @@ export class ChatPlugin extends plugin {
     return this.dedupeToolNames?.has(toolName)
   }
 
-  isToolResultError(result) {
-    const text = typeof result === "string" ? result : JSON.stringify(result || "")
-    return /^error[:：]/i.test(text.trim()) || /"error"\s*:/.test(text) || /失败|错误|失敗|錯誤/.test(text)
+  /**
+   * 群对话并发是否已达上限（concurrentLimit）。
+   * 供 handleTool 之前的路径（会话追踪判定 / smart Gate）提前让步，
+   * 避免先消耗一次判定 API、最后又被 handleTool 的并发检查丢弃。
+   */
+  isGroupChatAtCapacity(groupId) {
+    if (!groupId) return false
+    const limit = Math.max(1, Number(this.config.concurrentLimit) || 5)
+    return (activeGroupChatCounts.get(groupId) || 0) >= limit
   }
 
   syncDedupeToolConfig(toolNames = this.config.oneapi_tools || []) {
@@ -313,7 +329,7 @@ export class ChatPlugin extends plugin {
         }
         const func = this.functionMap.get(name)
         if (!func) {
-          if (warnMissing) console.warn(`未找到工具 "${name}"`)
+          if (warnMissing) logger.warn(`未找到工具 "${name}"`)
           return null
         }
         return {
@@ -370,7 +386,7 @@ export class ChatPlugin extends plugin {
       }
       return []
     } catch (error) {
-      console.error(`获取消息历史失败:`, error)
+      logger.error(`获取消息历史失败:`, error)
       return []
     }
   }
@@ -378,10 +394,13 @@ export class ChatPlugin extends plugin {
   async saveGroupUserMessages(groupId, userId, messages) {
     const redisKey = `${this.messageHistoriesRedisKey}:${groupId}:${userId}`
     const filePath = path.join(this.messageHistoriesDir, `${groupId}_${userId}.json`)
-    await Promise.all([
-      saveData(redisKey, filePath, messages),
-      fs.promises.writeFile(filePath, JSON.stringify(messages, null, 2), "utf-8")
-    ]).catch(err => console.error(`保存消息历史失败:`, err))
+    // 串行写：saveData 在 redis 挂掉时会降级写同一个文件，并发写会导致 JSON 交错损坏
+    try {
+      await saveData(redisKey, filePath, messages)
+      await fs.promises.writeFile(filePath, JSON.stringify(messages, null, 2), "utf-8")
+    } catch (err) {
+      logger.error(`保存消息历史失败:`, err)
+    }
   }
 
   async clearGroupUserMessages(groupId, userId) {
@@ -431,8 +450,11 @@ export class ChatPlugin extends plugin {
       const hasMessage = e.msg && typeof e.msg === "string" &&
         this.config.triggerPrefixes.some(p => p && e.msg.toLowerCase().includes(p.toLowerCase()))
 
+      // 用 e.self_id / e.bot.uin（收到消息的账号）做 @ 检测；
+      // TRSS 多账号下 Bot.uin 是数组，`qq == Bot.uin` 永远不成立会导致 @bot 检测失效
+      const selfId = e?.self_id ?? e?.bot?.uin ?? (typeof Bot !== "undefined" ? Bot.uin : "")
       const hasAt = Array.isArray(e.message) &&
-        e.message.some(msg => msg?.type == "at" && msg?.qq == Bot.uin)
+        e.message.some(msg => msg?.type == "at" && String(msg?.qq) === String(selfId))
 
       return hasMessage || hasAt
     } catch {
@@ -514,6 +536,8 @@ export class ChatPlugin extends plugin {
 
     // 在追踪期内，判断是否在继续对话
     if (this.config.conversationTrackingEnabled && activeConv) {
+      // 群并发已满时提前让步，避免白白消耗一次"是否在跟 bot 对话"的判定 API
+      if (this.isGroupChatAtCapacity(e.group_id)) return false
       // 节流检查
       const throttleKey = conversationKey
       const lastCallTime = trackingThrottle.get(throttleKey) || 0
@@ -554,23 +578,31 @@ export class ChatPlugin extends plugin {
       return false
     }
 
-    if (this.localToolsReadyPromise) await this.localToolsReadyPromise
-    await this.refreshLocalToolRegistry({ silent: true })
-    await this.waitForMCPReady()
+    // 群级并发上限（concurrentLimit）：同群达到上限时，新消息直接不触发（不排队）
+    const concurrentLimit = Math.max(1, Number(this.config.concurrentLimit) || 5)
+    const activeChats = activeGroupChatCounts.get(e.group_id) || 0
+    if (activeChats >= concurrentLimit) {
+      logger.info(`[并发限制] 群 ${e.group_id} 已有 ${activeChats}/${concurrentLimit} 条对话处理中，本条消息不触发`)
+      return false
+    }
+    activeGroupChatCounts.set(e.group_id, activeChats + 1)
 
-    const taskContext = await this.beginConversationTask(e)
-    const handleToolStartAt = Date.now()
+    try {
+      if (this.localToolsReadyPromise) await this.localToolsReadyPromise
+      await this.refreshLocalToolRegistry({ silent: true })
+      await this.waitForMCPReady()
 
-    const { group_id: groupId, user_id: userId, msg } = e
-    const sessionId = randomUUID()
-    e.sessionId = sessionId
-    const session = this.getOrCreateSession(sessionId, this.tools)
-    session.taskContext = taskContext
-    const groupLimiter = getOrCreateGroupLimiter(this._groupLimiters, groupId, this.config.concurrentLimit || 5)
+      const taskContext = await this.beginConversationTask(e)
+      const handleToolStartAt = Date.now()
 
-    let groupUserMessages = session.groupUserMessages
+      const { group_id: groupId, user_id: userId, msg } = e
+      const sessionId = randomUUID()
+      e.sessionId = sessionId
+      const session = this.getOrCreateSession(sessionId, this.tools)
+      session.taskContext = taskContext
 
-    return await groupLimiter(async () => {
+      let groupUserMessages = session.groupUserMessages
+
       try {
         const args = msg?.replace(/^#tool\s*/, "").trim() || ""
         const atQq = e.message.filter(m => m.type === "at" && m.qq !== Bot.uin).map(m => m.qq)
@@ -666,67 +698,19 @@ export class ChatPlugin extends plugin {
 
         logger.debug(`[身份信息] 最终群名片=${botCardInGroup}, 群身份=${botRoleInGroup}`)
 
-        const systemContent = `
-【认知系统初始化】
-${this.config.systemContent}
-
-【核心身份原则】
-你在本群的当前显示名称（群名片）是"${botCardInGroup}"，QQ号 ${Bot.uin}，群身份 ${botRoleInGroup}。
-当用户 @ 你或叫你时，可能使用：完整群名片、昵称简称、谐音、叠字等变体(如"${botCardInGroup}"可能被叫成"小鬼""基基""哈基"等)。只要名称里包含你名字的关键字，大概率是在叫你。
-群名片可能与你的人设昵称不同，但这是你在本群的实际显示名。
-
-实时数据
-${JSON.stringify({
-          group_info: {
-            group_id: groupContext.groupId,
-            group_name: groupContext.groupName,
-            group_notice: groupContext.groupNotice,
-            administrators: await getHighLevelMembers(e.group)
-          },
-          environmental_factors: { local_time: "北京时间: " + new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) }
-        }, null, 2)}
-2.【消息格式】
-[YYYY-MM-DD HH:MM:SS] 昵称(qq号: xxx)[群身份: xxx]: 在群里说: {message}
-引用消息时格式为: [回复 昵称的消息: "原文内容"] @被艾特的人 在群里说: {message}
-3.【艾特、@格式】
-@+qq号,例如@32174，@xxxxx
-
-${enhancedPrompts ? `【角色状态】\n${enhancedPrompts}\n` : ''}【工具调用】
-你只负责判断当前需不需要调用工具，不用考虑文本回复内容。
-
-【工具调用判断原则】
-你是群里的活人，工具是你的本能动作——想戳人就戳，想发语音就发，想搜东西就搜，不需要别人命令你。
-- 主动使用：聊到歌/音乐 → 搜来分享；气氛到了 → 戳一戳/发语音/贴表情；有人提到新闻/事件/不懂的东西 → 主动搜一下；看到图片想评价 → 分析一下；聊到好玩的 → 发个表情包。像真人一样自然地使用这些能力，不要等别人下指令。
-- 被明确要求时：看下/帮我查/搜一下/画个/分析 等请求 → 调用对应工具拿真实结果，不要用人设里的"懒/嘴硬"糊弄一个编造的假结果。
-- 你不想做时：基于人设你可以有脾气——"凭啥""不想""自己来"，拒绝就行，不调用工具。但注意：有脾气是偶尔的调味，不是默认状态，大多数时候你还是愿意互动的。
-- 没有合适工具的场景：纯闲聊/玩梗/吵架围观这些确实没有对应工具可用时，不调用，正常文字回应。
-口径一致（最重要）：决定一次定死——不调用就不要在后续假装做过；一旦调用并执行成功，就视为你已经做完这件事，后续回复必须承认已完成，不得声称没做、拒绝做或做不到。
-
-${mcpPrompts}
-【工具使用隐藏规则】
-1⃣ 严禁在回复中显示工具调用代码或函数名称
-2⃣ 工具执行后，以自然对话方式呈现结果，如同人类完成了该任务
-绝对禁止在任何回复中显示工具调用代码、函数名称或任何内部执行细节。这包括但不限于：
-* \`print(...)\`、\`tool_name(...)\` 等类似编程语言的语法。
-* \`[tool_code]\`、\` <tool_code> \` 等任何形式的工具代码块标记。
-3⃣ 示例转换:
-✅ 正确: "八重神子的全身像已经画好啦，按照你要求的侧面视角做的，感觉还挺好看的~"
-❌ 错误示例 (绝对不允许):**
-* \`[tool_code]\`
-* \`print(pokeTool(user_qq_number=1390963734))\`
-* \`print(pokeTool(user_qq_number=1390963734))\`
-* "我正在运行 \`pokeTool\` 函数..."
-
-【回复格式规则 - 极其重要】
-你的回复必须是纯文本内容，绝对禁止模仿消息记录的格式！
-❌ 错误: "[2025-12-24 12:42:25] 哈基米(qq号: 3012184357)[群身份: admin]: 在群里说: 想听啥？"
-❌ 错误: "[时间] 昵称(qq号: xxx)[群身份: xxx]: 内容"
-✅ 正确: "想听啥？"
-✅ 正确: "中午好呀~"
-消息记录格式仅用于你理解上下文，回复时只输出纯内容！
-
-${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
-`
+        const administrators = await getHighLevelMembers(e.group)
+        const systemContent = buildChatSystemPrompt({
+          systemContent: this.config.systemContent,
+          botCardInGroup,
+          botUin: Bot.uin,
+          botRoleInGroup,
+          groupContext,
+          administrators,
+          localTime: "北京时间: " + new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }),
+          enhancedPrompts,
+          mcpPrompts,
+          toolHistoryPrompt
+        })
         // 获取历史记录
         if (this.config.groupHistory) {
           const chatHistory = await this.messageManager.getMessages(e.message_type, e.message_type === "group" ? e.group_id : e.user_id)
@@ -814,14 +798,18 @@ ${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
         return true
 
       } catch (error) {
-        console.error(`[工具插件] 会话 ${sessionId} 执行异常：`, error)
+        logger.error(`[工具插件] 会话 ${sessionId} 执行异常：`, error)
         this.clearSession(sessionId)
         return true
       } finally {
         await this.finishConversationTask(taskContext, session)
         if (e.group_id) this.recordReplyLatency(e.group_id, Date.now() - handleToolStartAt)
       }
-    })
+    } finally {
+      const remaining = (activeGroupChatCounts.get(e.group_id) || 1) - 1
+      if (remaining <= 0) activeGroupChatCounts.delete(e.group_id)
+      else activeGroupChatCounts.set(e.group_id, remaining)
+    }
   }
 
 
@@ -832,7 +820,7 @@ ${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
         const response = await YTapi(requestData, this.config, toolContent, toolName)
         if (response) return response
       } catch (error) {
-        console.error(`API请求失败(${retries}):`, error)
+        logger.error(`API请求失败(${retries}):`, error)
       }
       retries--
     }
@@ -955,7 +943,7 @@ ${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
       const isTerminal = rawResult && typeof rawResult === "object" && !Array.isArray(rawResult) && rawResult.terminal === true
       const result = this.serializeToolResult(isTerminal ? rawResult.result : rawResult)
       if (dedupeEnabled && toolRunValue.messageId) {
-        const failed = this.isToolResultError(result)
+        const failed = isToolResultError(result)
         await this.saveTaskStatus({
           groupId: e.group_id,
           userId: e.user_id,
@@ -1097,23 +1085,18 @@ ${toolHistoryPrompt ? `${toolHistoryPrompt}\n\n` : ''}【群聊消息记录】
     }
   }
 
-  async executeTool(tool, params, e, isRetry = false) {
-    try {
-      if (typeof tool === "string" && mcpManager.isMCPTool(tool)) {
-        return await mcpManager.executeToolByAlias(tool, params)
-      }
-
-      if (tool && typeof tool.execute === "function") {
-        return await tool.execute(params, e)
-      }
-
-      return null
-    } catch (error) {
-      if (!isRetry) {
-        return this.executeTool(tool, params, e, true)
-      }
-      throw error
+  async executeTool(tool, params, e) {
+    // 不做自动重试：戳一戳/禁言/送礼等工具有副作用，盲目重试可能重复执行；
+    // 失败信息会以 error 结果回传给模型，由模型决定后续动作。
+    if (typeof tool === "string" && mcpManager.isMCPTool(tool)) {
+      return await mcpManager.executeToolByAlias(tool, params)
     }
+
+    if (tool && typeof tool.execute === "function") {
+      return await tool.execute(params, e)
+    }
+
+    return null
   }
 
   async handleTextResponse(content, e, session, messages, toolName) {

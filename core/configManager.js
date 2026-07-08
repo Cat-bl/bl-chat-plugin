@@ -4,6 +4,9 @@ import YAML from "yaml"
 import chokidar from "chokidar"
 
 let configWatcher = null
+// 模块级配置缓存：Yunzai 每条消息都会实例化插件并调用 initConfig，
+// 缓存 + mtime 校验避免每条消息全量读盘/解析/合并。文件变化时走全量路径并更新缓存。
+let cachedConfig = null // { pluginSettings, userMtimeMs, defaultMtimeMs }
 
 // 配置初始化与递归合并。
 // 以 mixin 形式挂到插件原型上（见 apps 主文件末尾的 Object.assign），
@@ -43,20 +46,37 @@ export const configManagerMethods = {
     return true
   }
 ,
+  /**
+   * 加载插件配置到 this.config。
+   * @returns {boolean} true=本次执行了全量读盘（首启/文件变化/加载失败），调用方应刷新共享子系统；
+   *                    false=直接复用了缓存
+   */
   initConfig() {
-    this.ensureConfigFiles()
-
     const configDir = path.join(process.cwd(), "plugins/bl-chat-plugin/config")
     const configDefaultDir = path.join(process.cwd(), "plugins/bl-chat-plugin/config_default")
     const configPath = path.join(configDir, "message.yaml")
     const defaultConfigPath = path.join(configDefaultDir, "message.yaml")
+
+    // 快路径：两个配置文件 mtime 都没变时直接复用缓存（每条消息都会走到这里）
+    if (cachedConfig) {
+      try {
+        const userMtimeMs = fs.statSync(configPath).mtimeMs
+        const defaultMtimeMs = fs.statSync(defaultConfigPath).mtimeMs
+        if (userMtimeMs === cachedConfig.userMtimeMs && defaultMtimeMs === cachedConfig.defaultMtimeMs) {
+          this.config = cachedConfig.pluginSettings
+          return false
+        }
+      } catch {}
+    }
+
+    this.ensureConfigFiles()
 
     try {
       if (!fs.existsSync(defaultConfigPath)) {
         logger.error(`[配置] 默认配置文件不存在: ${defaultConfigPath}`)
         logger.error(`[配置] 请在 config_default 目录下创建 message.yaml 文件`)
         this.config = {}
-        return
+        return true
       }
 
       const defaultConfig = YAML.parse(fs.readFileSync(defaultConfigPath, "utf8"))
@@ -76,6 +96,13 @@ export const configManagerMethods = {
         logger.info(`[配置] 已从默认配置创建: ${configPath}`)
         this.config = defaultConfig.pluginSettings
       }
+
+      // 只在成功加载后缓存（stat 必须在可能的写回之后，否则 mtime 对不上）
+      cachedConfig = {
+        pluginSettings: this.config,
+        userMtimeMs: fs.statSync(configPath).mtimeMs,
+        defaultMtimeMs: fs.statSync(defaultConfigPath).mtimeMs
+      }
     } catch (err) {
       logger.error(`[配置] 加载配置文件失败: ${err}`)
       this.config = {}
@@ -91,20 +118,33 @@ export const configManagerMethods = {
           try {
             const defaultConfig = YAML.parse(fs.readFileSync(defaultConfigPath, "utf8"))
             const userConfig = YAML.parse(fs.readFileSync(configPath, "utf8"))
+            // mergeConfig 是纯函数，用注册 watcher 时的实例调用无副作用
             const merged = this.mergeConfig(defaultConfig, userConfig)
-            this.config = merged.pluginSettings
+            cachedConfig = {
+              pluginSettings: merged.pluginSettings,
+              userMtimeMs: fs.statSync(configPath).mtimeMs,
+              defaultMtimeMs: fs.statSync(defaultConfigPath).mtimeMs
+            }
 
-            // 刷新各模块配置
+            // 刷新共享子系统与最新存活实例。
+            // 注意：不能把状态写回 this —— watcher 闭包捕获的是首条消息的旧实例，
+            // Yunzai 每条消息都会新建实例并从 cachedConfig 取配置；
+            // 跨消息生效的部分（各 Manager、工具注册表、sessionMap）经 sharedState / pluginBridge 刷新。
             // 动态 import：避免本模块静态依赖 sharedState（其依赖链需要 Yunzai 运行环境）；
             // 运行时该模块早已被主文件加载，这里直接命中模块缓存
-            const { initializeSharedState } = await import("./sharedState.js")
-            const state = initializeSharedState(this.config)
-            this.knowledgeSearcher = state.knowledgeSearcher
-            this.MAX_HISTORY = this.config.groupMaxMessages || 100
-            this.refreshLocalToolRegistry({ force: true }).catch(error => {
-              logger.error(`[bl-chat-plugin][热更新] 重新加载本地工具失败: ${error}`)
-              this.initTools()
-            })
+            const { initializeSharedState, getSharedState } = await import("./sharedState.js")
+            initializeSharedState(cachedConfig.pluginSettings)
+            const { pluginBridge } = await import("../utils/pluginBridge.js")
+            const inst = pluginBridge.instance
+            if (inst) {
+              inst.config = cachedConfig.pluginSettings
+              inst.MAX_HISTORY = inst.config.groupMaxMessages || 100
+              inst.knowledgeSearcher = getSharedState()?.knowledgeSearcher || null
+              await inst.refreshLocalToolRegistry({ force: true }).catch(error => {
+                logger.error(`[bl-chat-plugin][热更新] 重新加载本地工具失败: ${error}`)
+                inst.initTools()
+              })
+            }
 
             logger.mark(`[bl-chat-plugin][热更新] message.yaml 配置已重新加载`)
           } catch (err) {
@@ -113,6 +153,8 @@ export const configManagerMethods = {
         }, 500)
       })
     }
+
+    return true
   }
 ,
   mergeConfig(defaults, user) {
