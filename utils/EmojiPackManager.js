@@ -722,23 +722,28 @@ ${list}
   }
 
   scheduleSave(items) {
-    this.pendingItems = items
-    if (this.pendingWriteTimer) clearTimeout(this.pendingWriteTimer)
-    this.pendingWriteTimer = setTimeout(() => {
-      const toSave = this.pendingItems
-      this.pendingItems = null
-      this.pendingWriteTimer = null
-      this.saveItems(toSave).catch(err => logWarn(`节流写入失败: ${err.message}`))
-    }, 2000)
+    // 已废弃：markUsed 现走 writeQueue 串行直写，不再用 2s 防抖（会持旧快照覆写丢失新入库表情）
+    // 保留空方法避免外部潜在引用报错
+    void items
   }
 
   async markUsed(hash) {
+    // 走 writeQueue 串行：在队列里重新加载最新 items 再修改 + 立即保存，
+    // 否则 scheduleSave 的 2s 防抖会持有一份旧快照，期间 addFromBuffer 写入的新表情
+    // 会被这份旧快照整文件覆写丢失（文件残留磁盘 -> 巡检补登为无标签 -> 再巡检当残废删除）。
+    const task = () => this._markUsedInternal(hash)
+    const result = this.writeQueue.then(task, task)
+    this.writeQueue = result.catch(() => {})
+    return result
+  }
+
+  async _markUsedInternal(hash) {
     const items = await this.loadItems(true)
     const item = items.find(i => i.hash === hash)
     if (!item) return
     item.usedCount = (item.usedCount || 0) + 1
     item.lastUsedAt = new Date().toISOString()
-    this.scheduleSave(items)
+    await this.saveItems(items)
   }
 
   async removeByHashPrefix(hashPrefix) {

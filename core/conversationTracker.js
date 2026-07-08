@@ -571,7 +571,8 @@ export const conversationTrackerMethods = {
       // 群并发已满：Gate 判定 API 不必发起，直接让步本条。
       // 不清 forceContinue / pendingCount —— @bot 等强触发保留到下一条消息（届时名额可能已释放）
       if (this.isGroupChatAtCapacity(groupId)) {
-        logger.info(`[并发限制] group=${groupId} 对话处理已达上限，本轮不请求 Gate/不触发`)
+        const { active, limit } = this.getGroupChatConcurrency(groupId)
+        logger.info(`[并发限制][smart-Gate] 群${groupId} 已有 ${active}/${limit} 条对话在处理，本轮不请求 Gate/不触发（非API异常，现有对话处理完后下条消息自动恢复）。msg="${String(e.msg || '').slice(0, 30)}"`)
         return false
       }
 

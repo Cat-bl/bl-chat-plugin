@@ -573,32 +573,48 @@ function convertToAnthropicFormat(requestData, originalRequestData) {
  * @param {Object} requestData - 请求体对象
  * @returns {Promise<{response: Response, errorText: string|null}>} errorText 仅在最终响应失败时填充
  */
+// 主对话 API 默认超时：网络挂起时避免长时间占住 smart 入口锁 / 群并发名额（fetch 默认无超时）
+const DEFAULT_API_TIMEOUT_MS = 120000
+
 async function fetchWithThinkingFallback(url, headers, requestData, signal) {
+    // 无外部 signal（主对话 YTapi 路径）时给默认超时；有外部 signal（callAI/Gate 已自管超时）时沿用
+    let timeoutId = null
+    let effectiveSignal = signal
+    if (!effectiveSignal) {
+        const controller = new AbortController()
+        timeoutId = setTimeout(() => controller.abort(), DEFAULT_API_TIMEOUT_MS)
+        effectiveSignal = controller.signal
+    }
+
     const send = (body) => fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        signal
+        signal: effectiveSignal
     })
 
-    const response = await send(requestData)
-    if (response.ok || !requestData?.thinking) {
-        return { response, errorText: response.ok ? null : await response.text().catch(() => '无法读取错误内容') }
-    }
+    try {
+        const response = await send(requestData)
+        if (response.ok || !requestData?.thinking) {
+            return { response, errorText: response.ok ? null : await response.text().catch(() => '无法读取错误内容') }
+        }
 
-    // 失败且带了 thinking：判断是否因模型不支持 thinking
-    const errorText = await response.text().catch(() => '无法读取错误内容')
-    if (!/thinking/i.test(errorText)) {
-        return { response, errorText }
-    }
+        // 失败且带了 thinking：判断是否因模型不支持 thinking
+        const errorText = await response.text().catch(() => '无法读取错误内容')
+        if (!/thinking/i.test(errorText)) {
+            return { response, errorText }
+        }
 
-    logger.warn('[Anthropic] 模型疑似不支持 thinking，去掉该字段后重试')
-    const withoutThinking = { ...requestData }
-    delete withoutThinking.thinking
-    const retryResponse = await send(withoutThinking)
-    return {
-        response: retryResponse,
-        errorText: retryResponse.ok ? null : await retryResponse.text().catch(() => '无法读取错误内容')
+        logger.warn('[Anthropic] 模型疑似不支持 thinking，去掉该字段后重试')
+        const withoutThinking = { ...requestData }
+        delete withoutThinking.thinking
+        const retryResponse = await send(withoutThinking)
+        return {
+            response: retryResponse,
+            errorText: retryResponse.ok ? null : await retryResponse.text().catch(() => '无法读取错误内容')
+        }
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId)
     }
 }
 

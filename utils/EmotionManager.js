@@ -58,10 +58,10 @@ export class EmotionManager {
         return this.applyDecay(state)
       }
 
-      return { ...this.defaultState }
+      return { ...this.defaultState, recentEvents: [] }
     } catch (error) {
       logger.error(`[情感系统] 获取情绪失败: ${error}`)
-      return { ...this.defaultState }
+      return { ...this.defaultState, recentEvents: [] }
     }
   }
 

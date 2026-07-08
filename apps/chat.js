@@ -300,8 +300,16 @@ export class ChatPlugin extends plugin {
    */
   isGroupChatAtCapacity(groupId) {
     if (!groupId) return false
+    const { active, limit } = this.getGroupChatConcurrency(groupId)
+    return active >= limit
+  }
+
+  /**
+   * 取群当前并发占用情况，供日志统一输出。
+   */
+  getGroupChatConcurrency(groupId) {
     const limit = Math.max(1, Number(this.config.concurrentLimit) || 5)
-    return (activeGroupChatCounts.get(groupId) || 0) >= limit
+    return { active: activeGroupChatCounts.get(groupId) || 0, limit }
   }
 
   syncDedupeToolConfig(toolNames = this.config.oneapi_tools || []) {
@@ -537,7 +545,11 @@ export class ChatPlugin extends plugin {
     // 在追踪期内，判断是否在继续对话
     if (this.config.conversationTrackingEnabled && activeConv) {
       // 群并发已满时提前让步，避免白白消耗一次"是否在跟 bot 对话"的判定 API
-      if (this.isGroupChatAtCapacity(e.group_id)) return false
+      if (this.isGroupChatAtCapacity(e.group_id)) {
+        const { active, limit } = this.getGroupChatConcurrency(e.group_id)
+        logger.info(`[并发限制][strict-追踪] 群${e.group_id} 已有 ${active}/${limit} 条对话在处理，跳过本次接续判定（非API异常，现有对话处理完后下条消息自动恢复）。msg="${String(e.msg || '').slice(0, 30)}"`)
+        return false
+      }
       // 节流检查
       const throttleKey = conversationKey
       const lastCallTime = trackingThrottle.get(throttleKey) || 0
@@ -582,7 +594,7 @@ export class ChatPlugin extends plugin {
     const concurrentLimit = Math.max(1, Number(this.config.concurrentLimit) || 5)
     const activeChats = activeGroupChatCounts.get(e.group_id) || 0
     if (activeChats >= concurrentLimit) {
-      logger.info(`[并发限制] 群 ${e.group_id} 已有 ${activeChats}/${concurrentLimit} 条对话处理中，本条消息不触发`)
+      logger.info(`[并发限制][handleTool] 群${e.group_id} 已有 ${activeChats}/${concurrentLimit} 条对话在处理，本条消息不触发对话（非API异常，现有对话处理完后下条消息自动恢复）。msg="${String(e.msg || '').slice(0, 30)}"`)
       return false
     }
     activeGroupChatCounts.set(e.group_id, activeChats + 1)
@@ -809,6 +821,7 @@ export class ChatPlugin extends plugin {
       const remaining = (activeGroupChatCounts.get(e.group_id) || 1) - 1
       if (remaining <= 0) activeGroupChatCounts.delete(e.group_id)
       else activeGroupChatCounts.set(e.group_id, remaining)
+      logger.debug(`[并发限制] 群${e.group_id} 对话处理完成，释放名额，剩余 ${remaining}/${concurrentLimit}`)
     }
   }
 
