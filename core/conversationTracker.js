@@ -3,7 +3,8 @@
 // - smart 模式：每群独立频率状态机（trackingChatStates）、时机 Gate、复读检测、
 //   禁言缓存、回复 debounce、批量"是否在和 bot 说话"判断
 // 以 mixin 形式挂到插件原型上，this 指向插件实例。
-import { extractChatKeywords, isQuestionMessage, isFeedbackMessage } from "./chatHeuristics.js"
+import { extractChatKeywords } from "./chatHeuristics.js"
+import { prefilterMessage as prefilterMessagePure } from "./prefilter.js"
 import { callAI } from "../utils/apiClient.js"
 
 // 会话追踪: key: `${groupId}_${userId}`, value: { lastActiveTime, chatHistory: [], timer: null }
@@ -138,70 +139,13 @@ export const conversationTrackerMethods = {
 
   /**
    * 本地预筛：免 LLM 决定明显该回 / 不该回 / 高优先级走 Gate。
-   * 返回 { kind, reason }，kind 取值：
-   *   'force_continue' - @bot / 触发关键词命中（外层已有 inevitableAtReply 处理，这里主要识别"引用 bot 消息"）
-   *   'addressed_other' - 消息 @ 了非 bot
-   *   'empty_content' - 纯表情/图片/转账，无文本
-   *   'bot_self_echo' - bot 自己发的消息
-   *   'continuation_strong' - 命中 R1/R2/R3/R4 任一，应走 Gate
-   *   'regular' - 默认
+   * 判定逻辑在 core/prefilter.js（纯函数，有单测），这里只解析 botId 并兜异常。
    */
   prefilterMessage(e, state) {
     const smartCfg = this.config.smartTrigger || {}
     try {
-      // bot 自己发的消息（防自激励）
       const botId = e?.bot?.uin || (typeof Bot !== 'undefined' && Bot.uin)
-      if (botId && String(e?.user_id) === String(botId)) {
-        return { kind: 'bot_self_echo', reason: 'sender_is_self' }
-      }
-      // @ 别人（且不是 @ bot）→ 跳过
-      if (smartCfg.skipWhenAddressedOther !== false && Array.isArray(e?.message)) {
-        const atSegs = e.message.filter(m => m?.type === 'at')
-        if (atSegs.length > 0) {
-          const atSelf = atSegs.some(m => String(m?.qq) === String(botId))
-          if (!atSelf) {
-            return { kind: 'addressed_other', reason: 'at_other_user' }
-          }
-        }
-      }
-      // 空文本（纯表情/图片/转账）→ 跳过
-      if (smartCfg.skipWhenEmptyText !== false) {
-        const rawText = (typeof e?.msg === 'string' ? e.msg : '').trim()
-        if (!rawText) {
-          return { kind: 'empty_content', reason: 'no_text' }
-        }
-      }
-
-      // 以下为 continuation_strong 识别（必须距 bot 上次发言不远）
-      const text = String(e?.msg || '')
-      const sinceLastBotReply = state.lastBotReplyAt ? Date.now() - state.lastBotReplyAt : Infinity
-      const quickResponseMs = Number(smartCfg.quickResponseMs) || 30000
-      const lookbackMs = Number(smartCfg.continuationLookbackMs) || 180000
-
-      // R1：秒回反应（30s 内任何消息都视为接续）
-      if (sinceLastBotReply <= quickResponseMs) {
-        return { kind: 'continuation_strong', reason: 'R1_quick_response' }
-      }
-      // R2/R3/R4 共同前提：在 lookback 窗口内
-      if (sinceLastBotReply <= lookbackMs) {
-        // R2 关键词匹配
-        if (smartCfg.continuationKeywordMatch !== false && Array.isArray(state.lastBotReplyKeywords)) {
-          for (const kw of state.lastBotReplyKeywords) {
-            if (kw && text.includes(kw)) {
-              return { kind: 'continuation_strong', reason: `R2_keyword:${kw}` }
-            }
-          }
-        }
-        // R3 问句
-        if (smartCfg.continuationQuestionMatch !== false && isQuestionMessage(text)) {
-          return { kind: 'continuation_strong', reason: 'R3_question' }
-        }
-        // R4 反馈词
-        if (smartCfg.continuationFeedbackMatch !== false && isFeedbackMessage(text)) {
-          return { kind: 'continuation_strong', reason: 'R4_feedback' }
-        }
-      }
-      return { kind: 'regular', reason: '' }
+      return prefilterMessagePure(e, state, smartCfg, botId)
     } catch (err) {
       logger.warn(`[Prefilter] 异常，按 regular 处理：${err.message}`)
       return { kind: 'regular', reason: 'exception' }
@@ -552,6 +496,11 @@ export const conversationTrackerMethods = {
           // 顺手排个 cold 兜底（如果当前是 cold 状态）
           this.scheduleDeferredGateCheck(e, state)
           return false
+        }
+        if (prefilter.kind === 'force_continue' && smartCfg.inevitableAtReply !== false) {
+          // @bot（含裸 @）：直接标记强制回复，与 checkTriggers 命中同路径
+          state.forceContinue = true
+          logger.info(`[Prefilter] group=${groupId} force_continue reason=${prefilter.reason}`)
         }
         if (prefilter.kind === 'continuation_strong') {
           state.forceGateCheck = true

@@ -450,8 +450,11 @@ export class ChatPlugin extends plugin {
       const hasMessage = e.msg && typeof e.msg === "string" &&
         this.config.triggerPrefixes.some(p => p && e.msg.toLowerCase().includes(p.toLowerCase()))
 
+      // 用 e.self_id / e.bot.uin（收到消息的账号）做 @ 检测；
+      // TRSS 多账号下 Bot.uin 是数组，`qq == Bot.uin` 永远不成立会导致 @bot 检测失效
+      const selfId = e?.self_id ?? e?.bot?.uin ?? (typeof Bot !== "undefined" ? Bot.uin : "")
       const hasAt = Array.isArray(e.message) &&
-        e.message.some(msg => msg?.type == "at" && msg?.qq == Bot.uin)
+        e.message.some(msg => msg?.type == "at" && String(msg?.qq) === String(selfId))
 
       return hasMessage || hasAt
     } catch {
