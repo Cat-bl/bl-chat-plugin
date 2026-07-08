@@ -619,13 +619,20 @@ export const conversationTrackerMethods = {
         return false
       }
 
+      // 群并发已满：Gate 判定 API 不必发起，直接让步本条。
+      // 不清 forceContinue / pendingCount —— @bot 等强触发保留到下一条消息（届时名额可能已释放）
+      if (this.isGroupChatAtCapacity(groupId)) {
+        logger.info(`[并发限制] group=${groupId} 对话处理已达上限，本轮不请求 Gate/不触发`)
+        return false
+      }
+
       let gateResult
       try {
         // 强制继续路径直接放行，跳过 Gate；强制 Gate 路径仍交给 Gate 判断是否补一句
         if (state.forceContinue) {
           gateResult = { decision: 'continue', reason: 'force', __forceContinue: true }
         } else {
-          gateResult = await this.runTimingGate(e, state, { phase, prefilter, threshold })
+          gateResult = await this.runTimingGate(e, state, { phase, prefilter, threshold, prevLastMsgAt })
         }
       } catch (err) {
         logger.error(`[TimingGate] 调用失败:`, err)
@@ -762,8 +769,11 @@ export const conversationTrackerMethods = {
     const sinceLastBotReplySec = state.lastBotReplyAt
       ? Math.max(0, Math.floor((Date.now() - state.lastBotReplyAt) / 1000))
       : -1
-    const sinceLastMsgSec = state.lastMsgAt
-      ? Math.max(0, Math.floor((Date.now() - state.lastMsgAt) / 1000))
+    // 用入口处保存的"上一条消息时间"（state.lastMsgAt 在入口已被更新为当前消息时间，
+    // 直接用会导致这个信号恒为 0s）
+    const prevMsgAt = Number(ctx.prevLastMsgAt) || state.lastMsgAt
+    const sinceLastMsgSec = prevMsgAt
+      ? Math.max(0, Math.floor((Date.now() - prevMsgAt) / 1000))
       : 0
     const now = new Date()
     const hh = now.getHours()

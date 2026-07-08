@@ -239,7 +239,7 @@ export const messageBuilderMethods = {
           }
         }
       } catch (error) {
-        console.error("获取引用消息失败:", error)
+        logger.error("获取引用消息失败:", error)
       }
     }
 
@@ -337,7 +337,7 @@ export const messageBuilderMethods = {
   }
 ,
   processToolSpecificMessage(content, toolName) {
-    let output = sanitizeFinalReplyText(content.replace(/\n/g, "\n"))
+    let output = sanitizeFinalReplyText(content)
 
     // 过滤消息记录格式（多行全局匹配）
     // 匹配如: "[2026-01-27 16:12:51] 哈基米(QQ号: 2127498644)[群身份: member]: 以后注意点。"
@@ -346,22 +346,24 @@ export const messageBuilderMethods = {
     // 或: "[YYYY-MM-DD HH:MM:SS] 迈(QQ号: xxx)[群身份: xxx]: xxx"（AI输出的模板格式）
     output = output.replace(/\[(?:[A-Z]{4}-[A-Z]{2}-[A-Z]{2}\s+[A-Z]{2}:[A-Z]{2}:[A-Z]{2}|[A-Z]{2}-[A-Z]{2}\s+[A-Z]{2}:[A-Z]{2}:[A-Z]{2}|\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}|\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}|\d{2}:\d{2}:\d{2})\]\s*[^(\n]+\((?:QQ号|qq号)[:：]\s*\d+\)\[群身份[:：]\s*\w+\][:：]\s*(?:艾特了\s*[^(\n]+\((?:QQ号|qq号)[:：]\s*\d+\)\[群身份[:：]\s*\w+\])?\s*(?:在群里说[:：]\s*)?[^\n]*/gi, '')
 
+    // markdown 链接/图片转纯文本：[文本](url) / ![描述](url) → 文本\n- url
+    // （QQ 不渲染 markdown；须在剥离 [图片] 标记之前执行，否则 ![图片](url) 会先被拆坏）
+    output = output.replace(/!?\[(.*?)\]\((.*?)\)/g, "$1\n- $2")
+
     // 清理模式
     const patterns = [
-      /$$图片$$/g,
+      /\[图片\]/g,
       /[\s\S]在群里说[:：]\s/g,
-      /\[(?:\d{4}-\d{2}-\d{2}\s+|\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2}\]\s*.?[:：]\s/g,
-      /[\s\S]*?/g
+      /\[(?:\d{4}-\d{2}-\d{2}\s+|\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2}\]\s*.?[:：]\s/g
     ]
 
     for (const p of patterns) output = output.replace(p, "").trim()
-    // 提取消息内容
-    const match = /$$群身份: .+?$$[:：]\s*(.)/i.exec(output)
+    // 消息记录前缀残留时，提取 [群身份: xxx]: 之后的正文
+    const match = /\[群身份: .+?\][:：]\s*([\s\S]+)/i.exec(output)
     if (match) output = match[1]
     output = output.replace(/^[说說][:：]\s/, "")
 
     output = ThinkingProcessor.removeThinking(output)
-    output = output.replace(/!?$$(.*?)$$(.∗?)(.∗?)/g, "$1\n- $2")
     // 清理多余空行
     output = output.replace(/\n{3,}/g, '\n').trim()
     return sanitizeFinalReplyText(output)

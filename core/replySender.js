@@ -175,7 +175,7 @@ export const replySenderMethods = {
     const cqCodes = [], emojis = []
     let processed = text
 
-    processed = processed.replace(/$$CQ:[^$$]+$$/g, m => { cqCodes.push(m); return `{{CQ${cqCodes.length - 1}}}` })
+    processed = processed.replace(/\[CQ:[^\]]+\]/g, m => { cqCodes.push(m); return `{{CQ${cqCodes.length - 1}}}` })
     processed = processed.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]/gu, m => { emojis.push(m); return `{{E${emojis.length - 1}}}` })
     processed = processed.replace(/\.{3,}|…+/g, "{{...}}")
 

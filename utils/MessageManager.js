@@ -3,6 +3,10 @@ const { axios, moment } = dependencies;
 import schedule from 'node-schedule';
 import { refreshTencentImageUrl } from './fileUtils.js';
 
+// 同 key 写队列（模块级：本类会被多处 new，含 Yunzai 每条消息实例化的插件，
+// 实例级锁跨实例不生效）。串行化 读-改-写，避免并发记录互相覆盖丢消息。
+const writeQueues = new Map();
+
 export class MessageManager {
   /**
    * 初始化消息管理器
@@ -370,38 +374,47 @@ export class MessageManager {
    * @returns {Promise<void>}
    */
   async recordMessage(e, options = {}) {
-    try {
-      if (!e.sender) {
-        e.sender = {
-          user_id: Bot.uin,
-          nickname: Bot.nickname,
-          role: 'bot'
-        };
-      }
-      const isGroup = e.message_type === 'group';
-      const id = isGroup ? e.group_id : e.sender.user_id;
-      const type = isGroup ? 'group' : 'private';
-      const redisKey = this.getRedisKey(type, id);
-
-      let messages = await this.getMessages(type, id);
-      messages.unshift(await this.formatMessage(e)); // 在数组开头添加新消息
-
-      // 使用自定义群聊消息上限或默认值
-      const maxMessages = isGroup
-        ? (options.groupMaxMessages || this.GROUP_MAX_MESSAGES)
-        : this.PRIVATE_MAX_MESSAGES;
-
-      if (messages.length > maxMessages) {
-        messages = messages.slice(0, maxMessages); // 保留最新的消息
-      }
-
-      await redis.set(redisKey, JSON.stringify(messages), {
-        EX: this.CACHE_EXPIRE_DAYS * 24 * 60 * 60
-      });
-
-    } catch (error) {
-      logger.error(`记录消息失败: ${error}`);
+    if (!e.sender) {
+      e.sender = {
+        user_id: Bot.uin,
+        nickname: Bot.nickname,
+        role: 'bot'
+      };
     }
+    const isGroup = e.message_type === 'group';
+    const id = isGroup ? e.group_id : e.sender.user_id;
+    const type = isGroup ? 'group' : 'private';
+    const redisKey = this.getRedisKey(type, id);
+
+    // 排队写：等同 key 的上一次写完成后再执行本次 读-改-写
+    const prev = writeQueues.get(redisKey) || Promise.resolve();
+    const task = prev.then(() => this.doRecordMessage(e, options, { isGroup, type, id, redisKey }))
+      .catch(error => {
+        logger.error(`记录消息失败: ${error}`);
+      });
+    writeQueues.set(redisKey, task);
+    task.then(() => {
+      if (writeQueues.get(redisKey) === task) writeQueues.delete(redisKey);
+    });
+    return task;
+  }
+
+  async doRecordMessage(e, options, { isGroup, type, id, redisKey }) {
+    let messages = await this.getMessages(type, id);
+    messages.unshift(await this.formatMessage(e)); // 在数组开头添加新消息
+
+    // 使用自定义群聊消息上限或默认值
+    const maxMessages = isGroup
+      ? (options.groupMaxMessages || this.GROUP_MAX_MESSAGES)
+      : this.PRIVATE_MAX_MESSAGES;
+
+    if (messages.length > maxMessages) {
+      messages = messages.slice(0, maxMessages); // 保留最新的消息
+    }
+
+    await redis.set(redisKey, JSON.stringify(messages), {
+      EX: this.CACHE_EXPIRE_DAYS * 24 * 60 * 60
+    });
   }
 
   /**
@@ -415,10 +428,10 @@ export class MessageManager {
       const redisKey = this.getRedisKey(type, id);
       const data = await redis.get(redisKey);
       const messages = data ? JSON.parse(data) : [];
-      // 按时间戳倒序排序
+      // 按时间戳倒序排序（formatMessage 存的格式是 YYYY-MM-DD HH:mm:ss）
       return messages.sort((a, b) => {
-        const timeA = moment(a.time, 'MM-DD HH:mm:ss');
-        const timeB = moment(b.time, 'MM-DD HH:mm:ss');
+        const timeA = moment(a.time, 'YYYY-MM-DD HH:mm:ss');
+        const timeB = moment(b.time, 'YYYY-MM-DD HH:mm:ss');
         return timeB - timeA; // 倒序排列
       });
     } catch (error) {

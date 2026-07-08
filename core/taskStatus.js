@@ -3,6 +3,21 @@
 // 以 mixin 形式挂到插件原型上，this 指向插件实例（依赖 this.TASK_STATUS_PREFIX、this.config）。
 
 const taskStatusCache = new Map()
+// 内存缓存按"消息"记键，必须设上限：tool_success/tool_failed 的记录不会被 clearTaskStatus
+// 清理（redis 侧靠 TTL 过期），无上限会随消息量无限增长。超限时按插入序淘汰最旧的，
+// 被淘汰的条目 getTaskStatus 会自动回源 redis。
+const TASK_STATUS_CACHE_MAX = 2000
+
+function setTaskStatusCache(key, record) {
+  if (!taskStatusCache.has(key) && taskStatusCache.size >= TASK_STATUS_CACHE_MAX) {
+    let toEvict = taskStatusCache.size - TASK_STATUS_CACHE_MAX + 1
+    for (const oldestKey of taskStatusCache.keys()) {
+      taskStatusCache.delete(oldestKey)
+      if (--toEvict <= 0) break
+    }
+  }
+  taskStatusCache.set(key, record)
+}
 
 export const taskStatusMethods = {
   getTaskStatusCacheKey(groupId, messageId) {
@@ -30,7 +45,7 @@ export const taskStatusMethods = {
       updatedAt: Date.now()
     }
     const cacheKey = this.getTaskStatusCacheKey(groupId, messageId)
-    taskStatusCache.set(cacheKey, record)
+    setTaskStatusCache(cacheKey, record)
 
     try {
       await redis.set(this.getTaskStatusRedisKey(groupId, messageId), JSON.stringify(record), {
@@ -51,7 +66,7 @@ export const taskStatusMethods = {
       const raw = await redis.get(this.getTaskStatusRedisKey(groupId, messageId))
       if (!raw) return null
       const record = JSON.parse(raw)
-      taskStatusCache.set(cacheKey, record)
+      setTaskStatusCache(cacheKey, record)
       return record
     } catch (error) {
       logger.warn(`[任务状态] 读取失败：${error.message}`)
