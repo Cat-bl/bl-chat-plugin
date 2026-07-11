@@ -647,12 +647,13 @@ MCP 管理命令：
 | `conversationTrackingTimeout` | int | `2` | 追踪超时（分钟） |
 | `conversationTrackingThrottle` | int | `3` | 同一用户连续发消息时调用 AI 判断的最小间隔（秒） |
 | `batchJudgmentDelay` | int | `10` | 批量判断延迟（秒）—— 收集多少秒内的消息后批量判断 |
+| `conversationTrackingReplyDebounceMs` | int | `1500` | 回复去抖（毫秒）——判定在跟 bot 说话后先等这段时间，期间用户又发新消息就让步，只由最后一条合并回复一次，防止连发被逐条回复刷屏；`0`=关。习惯慢速分句发送可调大到 2000~3000 |
 
 **工作原理**：
 1. 用户 @ 或触发关键词破冰，启动该用户独立的追踪定时器
 2. 窗口内每条消息携带最多 10 条对话上下文调小模型判 `true/false`
 3. 多用户消息批量合并判断，减少 API 调用
-4. true → 继续接话；false → 安静
+4. true → 回复去抖：等 `conversationTrackingReplyDebounceMs`，用户还在连发就让步给后一条，只由最后一条触发一次回复（合并连发，防刷屏）→ 接话；false → 安静
 
 ### `smart` 模式：Gate 子代理 + 频率阈值
 

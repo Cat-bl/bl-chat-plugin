@@ -34,6 +34,13 @@ export default [
     bottomHelpMessage: "strict 模式: 收集多少秒内的消息后批量判断，减少 API 调用次数",
     componentProps: { min: 1, max: 60, placeholder: "10" }
   },
+  {
+    field: "conversationTrackingReplyDebounceMs",
+    label: "回复去抖（毫秒）",
+    component: "InputNumber",
+    bottomHelpMessage: "strict 模式: 判定为在跟 bot 说话后，先等这段时间看用户是否还在连发；期间有新消息就让步，只在用户停下来后回复一次（合并连发，防刷屏）。0=关闭。推荐 1000~2000",
+    componentProps: { min: 0, max: 10000, placeholder: "1500" }
+  },
 
   // ===== 触发模式切换 =====
   { component: "Divider", label: "对话触发模式切换" },

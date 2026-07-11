@@ -25,21 +25,30 @@ class KnowledgeSearcher {
   }
 
   async getEmbedding(input) {
-    const response = await fetch(this.apiUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ model: this.model, input })
-    })
+    // embedding 请求加超时：此调用在 handleTool 的对话准备链里串行阻塞，
+    // 无超时时 embedding 服务半挂会拖住整个回复（表现为"接口没问题但回复要一分钟"）
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 8000)
+    try {
+      const response = await fetch(this.apiUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ model: this.model, input }),
+        signal: controller.signal
+      })
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "")
-      throw new Error(`Embedding API 请求失败：${response.status} ${errorText}`)
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "")
+        throw new Error(`Embedding API 请求失败：${response.status} ${errorText}`)
+      }
+
+      return await response.json()
+    } finally {
+      clearTimeout(timeoutId)
     }
-
-    return await response.json()
   }
 
   async fileExists(filepath) {

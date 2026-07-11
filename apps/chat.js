@@ -544,6 +544,9 @@ export class ChatPlugin extends plugin {
 
     // 在追踪期内，判断是否在继续对话
     if (this.config.conversationTrackingEnabled && activeConv) {
+      // 登记本条消息序号：连发时后一条会拿到更大序号，使前一条的回复去抖检测到"还有新消息"而让步
+      const arrivalSeq = this.markTrackingArrival(conversationKey)
+
       // 群并发已满时提前让步，避免白白消耗一次"是否在跟 bot 对话"的判定 API
       if (this.isGroupChatAtCapacity(e.group_id)) {
         const { active, limit } = this.getGroupChatConcurrency(e.group_id)
@@ -572,6 +575,16 @@ export class ChatPlugin extends plugin {
       const isTalking = await this.addToBatchJudgment(conversationKey, userMessageFormatted, activeConv.chatHistory || [], e)
 
       if (isTalking) {
+        // 回复去抖：用户还在连发时让步，只由最后一条触发一次回复（handleTool 自带群历史，能看到连发的全部消息）
+        if (!(await this.applyTrackingReplyDebounce(conversationKey, arrivalSeq))) {
+          return false
+        }
+        // 去抖等待期间并发可能被占满，重新检查一次
+        if (this.isGroupChatAtCapacity(e.group_id)) {
+          const { active, limit } = this.getGroupChatConcurrency(e.group_id)
+          logger.info(`[并发限制][strict-追踪] 群${e.group_id} 去抖后并发已满 ${active}/${limit}，跳过本条`)
+          return false
+        }
         // 重置定时器
         this.setTrackingWithTimer(conversationKey)
         return await this.handleTool(e)
@@ -650,45 +663,43 @@ export class ChatPlugin extends plugin {
           message: e.msg
         })
 
-        // 获取情感、记忆、表达学习的 prompt
-        const emotionPrompt = this.config.emotionSystem?.enabled
-          ? await this.emotionManager.getEmotionPromptForGroup(groupId)
-          : ''
-        const memoryPrompt = this.config.memorySystem?.enabled
-          ? await this.memoryManager.getMemoryPromptForUser(groupId, userId, e.msg || "")
-          : ''
-        const groupMemoryPrompt = this.config.memorySystem?.enabled && groupId
-          ? await this.memoryManager.getGroupMemoryPrompt(groupId, e.msg || "")
-          : ''
-        const expressionPrompt = this.config.expressionLearning?.enabled
-          ? await this.expressionLearner.getExpressionPromptForGroup(groupId)
-          : ''
-
-        // 知识库检索
-        let knowledgePrompt = ''
-        if (this.knowledgeSearcher && e.msg) {
-          try {
-            const result = await this.knowledgeSearcher.search(e.msg)
-            if (result?.knowledgeContext) {
-              knowledgePrompt = `【知识库参考】\n以下是与当前话题相关的参考知识，请在回复时自然融入（不要生硬引用）：\n${result.knowledgeContext}`
-            }
-          } catch (err) {
-            logger.error(`[知识库] 检索失败: ${err.message}`)
-          }
-        }
-
-        // 对方画像注入（昵称 + 最近发言；长期记忆已由 memoryPrompt 覆盖，避免重复）
-        let personProfilePrompt = ''
-        if (this.config.personProfileInjection?.enabled && groupId && userId) {
-          try {
-            personProfilePrompt = await personProfileInjector.build(groupId, userId, e)
-          } catch (err) {
-            logger.error(`[画像注入] 失败: ${err.message}`)
-          }
-        }
+        // 情感/记忆/表达学习/知识库/画像/群上下文 这几个 prompt 互相独立，并行构建。
+        // 原来是逐个 await 串行，多个含 embedding/RPC 的慢调用会累加，是 @ 回复慢的主因之一。
+        const [
+          emotionPrompt,
+          memoryPrompt,
+          groupMemoryPrompt,
+          expressionPrompt,
+          knowledgePrompt,
+          personProfilePrompt,
+          groupContext
+        ] = await Promise.all([
+          this.config.emotionSystem?.enabled
+            ? this.emotionManager.getEmotionPromptForGroup(groupId).catch(err => { logger.error(`[情感] 获取失败: ${err.message}`); return '' })
+            : Promise.resolve(''),
+          this.config.memorySystem?.enabled
+            ? this.memoryManager.getMemoryPromptForUser(groupId, userId, e.msg || "").catch(err => { logger.error(`[记忆] 用户检索失败: ${err.message}`); return '' })
+            : Promise.resolve(''),
+          this.config.memorySystem?.enabled && groupId
+            ? this.memoryManager.getGroupMemoryPrompt(groupId, e.msg || "").catch(err => { logger.error(`[记忆] 群检索失败: ${err.message}`); return '' })
+            : Promise.resolve(''),
+          this.config.expressionLearning?.enabled
+            ? this.expressionLearner.getExpressionPromptForGroup(groupId).catch(err => { logger.error(`[表达学习] 获取失败: ${err.message}`); return '' })
+            : Promise.resolve(''),
+          (this.knowledgeSearcher && e.msg)
+            ? this.knowledgeSearcher.search(e.msg)
+                .then(result => result?.knowledgeContext
+                  ? `【知识库参考】\n以下是与当前话题相关的参考知识，请在回复时自然融入（不要生硬引用）：\n${result.knowledgeContext}`
+                  : '')
+                .catch(err => { logger.error(`[知识库] 检索失败: ${err.message}`); return '' })
+            : Promise.resolve(''),
+          (this.config.personProfileInjection?.enabled && groupId && userId)
+            ? personProfileInjector.build(groupId, userId, e).catch(err => { logger.error(`[画像注入] 失败: ${err.message}`); return '' })
+            : Promise.resolve(''),
+          this.getCurrentGroupContext(e).catch(err => { logger.error(`[群上下文] 获取失败: ${err.message}`); return { groupId: String(groupId || ''), groupName: '', groupNotice: '' } })
+        ])
 
         // 构建增强系统提示
-        const groupContext = await this.getCurrentGroupContext(e)
         const enhancedPrompts = [emotionPrompt, memoryPrompt, groupMemoryPrompt, expressionPrompt, knowledgePrompt, personProfilePrompt].filter(Boolean).join('\n')
         const toolHistoryPrompt = await this.getToolHistoryPromptForGroup(groupId)
 
