@@ -326,47 +326,47 @@ export default [
     componentProps: { min: 1, max: 30, placeholder: "5" }
   },
 
-  // ===== 智能模式 - 复读跟读 =====
-  { component: "Divider", label: "智能模式 - 复读跟读（看到群里复读按概率参与）" },
+  // ===== 复读跟读（strict / smart 两种模式都生效）=====
+  { component: "Divider", label: "复读跟读（看到群里复读按概率参与，两种模式都生效）" },
   {
     field: "smartTrigger.repeatJoinEnabled",
     label: "复读跟读总开关",
     component: "Switch",
-    bottomHelpMessage: "smart 模式: 检测到群里多人复读同一内容时，按概率让 bot 直接复读原文（绕过 Gate / LLM 改写），仍占用速率配额"
+    bottomHelpMessage: "检测到群里多人复读同一内容时，按概率让 bot 直接复读原文（绕过 LLM 改写）。strict / smart 两种模式都生效（配置项名沿用 smartTrigger.repeat*，但不再是 smart 专属）"
   },
   {
     field: "smartTrigger.repeatDetectionWindow",
     label: "复读检测窗口",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: 看最近 N 条群消息判断是否在复读",
+    bottomHelpMessage: "看最近 N 条群消息判断是否在复读",
     componentProps: { min: 2, max: 20, placeholder: "5" }
   },
   {
     field: "smartTrigger.repeatMinCount",
     label: "复读最少人数",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: 至少 N 个不同用户发了相同内容才算复读（含当前发言者）。3 较准确，2 偏松易把偶发同词误判",
+    bottomHelpMessage: "至少 N 个不同用户发了相同内容才算复读（含当前发言者）。3 较准确，2 偏松易把偶发同词误判",
     componentProps: { min: 2, max: 10, placeholder: "3" }
   },
   {
     field: "smartTrigger.repeatJoinProbability",
     label: "参与复读概率",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: 命中复读后 bot 参与的概率，0-1。设为 1 永远参与，0 永不参与",
+    bottomHelpMessage: "命中复读后 bot 参与的概率，0-1。设为 1 永远参与，0 永不参与",
     componentProps: { min: 0, max: 1, step: 0.1, placeholder: "0.6" }
   },
   {
     field: "smartTrigger.repeatJoinCooldownMs",
     label: "跟读后冷却 (ms)",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: bot 参与复读后多久内不再跟读，防同一波内反复跟（默认 180000 = 3 分钟；总量靠 maxRepliesPer10Min 兜底）",
+    bottomHelpMessage: "bot 参与复读后多久内不再跟读，防同一波内反复跟（默认 180000 = 3 分钟）",
     componentProps: { min: 0, max: 3600000, step: 60000, placeholder: "180000" }
   },
   {
     field: "smartTrigger.repeatMaxTextLength",
     label: "复读文本最大长度",
     component: "InputNumber",
-    bottomHelpMessage: "smart 模式: 单条复读文本超过此长度（字符数）则不参与，避免跟长发言",
+    bottomHelpMessage: "单条复读文本超过此长度（字符数）则不参与，避免跟长发言",
     componentProps: { min: 1, max: 200, placeholder: "30" }
   },
 

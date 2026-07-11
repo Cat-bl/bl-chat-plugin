@@ -369,6 +369,34 @@ export const conversationTrackerMethods = {
     return text
   },
 
+  /**
+   * 收集群消息进复读检测滑动窗口（存于 smart state 的 recentMessages，两种模式共用同一份状态）。
+   * strict/smart 都在各自入口调用，让复读跟读在两种模式下都能生效。
+   */
+  collectRepeatMessage(e) {
+    const groupId = e?.group_id
+    if (!groupId) return
+    const text = (typeof e?.msg === 'string' ? e.msg : '').trim()
+    if (!text) return
+    const state = this.getSmartState(groupId)
+    state.recentMessages = (state.recentMessages || []).slice(-9)
+    state.recentMessages.push({ userId: e.user_id, text, at: Date.now() })
+  },
+
+  /**
+   * 复读检测 + 跟发的统一入口，两种模式共用。命中并跟发返回 true（调用方应停止后续处理）。
+   * 复用 smart state（recentMessages / lastRepeatJoinAt / recentReplyTimestamps）——
+   * strict 模式下这些字段仅供复读自用，不参与 strict 主流程。
+   */
+  async tryJoinGroupRepeat(e) {
+    const groupId = e?.group_id
+    if (!groupId) return false
+    const state = this.getSmartState(groupId)
+    const repeatText = this.detectGroupRepeat(e, state)
+    if (!repeatText) return false
+    return await this.joinRepeat(e, state, repeatText)
+  },
+
   // ==================== smart 模式：Timing Gate 触发 ====================
 
   /**
@@ -478,12 +506,8 @@ export const conversationTrackerMethods = {
       // 活跃度采样移到入口锁外，避免抢锁失败时漏统计（影响 Gate 看到的 5min 消息数）
       state.recentIncomingTimestamps = (state.recentIncomingTimestamps || []).filter(t => t > Date.now() - 300000)
       state.recentIncomingTimestamps.push(Date.now())
-      // 复读检测用的最近消息 deque（保留最近 10 条文本）
-      const repeatText = (typeof e?.msg === 'string' ? e.msg : '').trim()
-      if (repeatText) {
-        state.recentMessages = (state.recentMessages || []).slice(-9)
-        state.recentMessages.push({ userId: e.user_id, text: repeatText, at: Date.now() })
-      }
+      // 复读检测用的最近消息 deque（收集逻辑抽到 collectRepeatMessage，strict/smart 共用）
+      this.collectRepeatMessage(e)
     }
     // 入口锁：该群已经有一个 handleRandomReplySmart 正在跑（Gate / debounce / handleTool 任一阶段）→ 让步本条
     // 必须在任何 await 之前同步检查并 set，防止 await checkTriggers 期间多个调用并发通过
@@ -559,10 +583,7 @@ export const conversationTrackerMethods = {
           || (smartCfg.mentionedNameReply && e.msg && Bot.nickname &&
               String(e.msg).toLowerCase().includes(String(Bot.nickname).toLowerCase()))
         if (!hasForceSignal) {
-          const repeatText = this.detectGroupRepeat(e, state)
-          if (repeatText) {
-            return await this.joinRepeat(e, state, repeatText)
-          }
+          if (await this.tryJoinGroupRepeat(e)) return true
         }
       }
 

@@ -542,6 +542,13 @@ export class ChatPlugin extends plugin {
       return await this.handleTool(e)
     }
 
+    // 群复读跟读（复读功能两种模式都生效，配置沿用 smartTrigger.repeat*）：
+    // 先收集消息进检测窗口，非 @/前缀触发时命中复读潮就直接跟发原文
+    this.collectRepeatMessage(e)
+    if (await this.tryJoinGroupRepeat(e)) {
+      return true
+    }
+
     // 在追踪期内，判断是否在继续对话
     if (this.config.conversationTrackingEnabled && activeConv) {
       // 登记本条消息序号：连发时后一条会拿到更大序号，使前一条的回复去抖检测到"还有新消息"而让步

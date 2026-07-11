@@ -742,19 +742,6 @@ bot 主动回复后进入 FOCUS 状态：期内所有新消息都强制走 Gate�
 | `promptHintBusyGroupRate` | int | `30` | 群最近 5min 消息数 ≥ 此值时，Gate prompt 提示"群里热闹倾向沉默"（默认 30，正常活跃群聊不会触发） |
 | `promptHintRateLimitWarn` | int | `5` | bot 最近 10min 已回复 ≥ 此值时，Gate prompt 强烈提示"避免刷屏" |
 
-##### 复读跟读（看到群里复读时按概率参与）
-
-检测最近 N 条群消息里若至少 `repeatMinCount` 个**不同用户**发了**完全相同**的文本，按 `repeatJoinProbability` 概率让 bot 直接 `e.reply(原文)` 跟一句一模一样的，**绕过 Gate / LLM 改写**。仍占用速率配额（计入 `maxRepliesPer10Min`），不升 FOCUS（复读不算正常对话参与）。
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `repeatJoinEnabled` | boolean | `true` | 总开关 |
-| `repeatDetectionWindow` | int | `5` | 检测窗口：看最近 N 条群消息 |
-| `repeatMinCount` | int | `3` | 至少 N 个不同用户发了相同内容才算复读（含当前用户）；2 偏松易把"两人偶发同词"误判为复读 |
-| `repeatJoinProbability` | float | `0.6` | 命中复读后参与的概率，0-1 |
-| `repeatJoinCooldownMs` | int | `180000` | bot 参与复读后多久不再跟读（防同一波内反复跟，3 分钟；总量靠 `maxRepliesPer10Min` 兜底） |
-| `repeatMaxTextLength` | int | `30` | 复读文本最大字符数，超过则不参与（避免跟长发言） |
-
 `talkValueRules` 默认示例（仅 `enableTalkValueRules: true` 时生效）：
 ```yaml
 talkValueRules:
@@ -763,6 +750,19 @@ talkValueRules:
   - { range: "00:00-07:59", value: 0.034 }  # 深夜安静 → 约 30 条触发一次
 ```
 > 阈值公式：`ceil(1 / talkValue)`。例如 `value=0.07 → 15 条`，`value=0.05 → 20 条`，`value=0.034 → 30 条`。时段命中**按数组顺序首条匹配**为准，跨夜可写成 `23:00-06:59`。
+
+#### 复读跟读（`smartTrigger.repeat*`，两种模式都生效）
+
+看到群里多人复读同一句时，bot 按概率跟发一句原文。**strict / smart 两种模式都生效**（配置项名沿用 `smartTrigger.repeat*`，但不再是 smart 专属）。检测最近 N 条群消息里若至少 `repeatMinCount` 个**不同用户**发了**完全相同**的文本，按 `repeatJoinProbability` 概率让 bot 直接 `e.reply(原文)` 跟一句一模一样的，**绕过 LLM 改写**。消息 @bot / 命中触发前缀（smart 下含名字提及）时不跟发，走正常回复流程。用 `repeatJoinCooldownMs` 冷却防同一波反复跟。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `repeatJoinEnabled` | boolean | `true` | 总开关 |
+| `repeatDetectionWindow` | int | `5` | 检测窗口：看最近 N 条群消息 |
+| `repeatMinCount` | int | `3` | 至少 N 个不同用户发了相同内容才算复读（含当前用户）；2 偏松易把"两人偶发同词"误判为复读 |
+| `repeatJoinProbability` | float | `0.6` | 命中复读后参与的概率，0-1 |
+| `repeatJoinCooldownMs` | int | `180000` | bot 参与复读后多久不再跟读（防同一波内反复跟，3 分钟） |
+| `repeatMaxTextLength` | int | `30` | 复读文本最大字符数，超过则不参与（避免跟长发言） |
 
 #### 对方画像注入 (`personProfileInjection`，两种模式都生效)
 
