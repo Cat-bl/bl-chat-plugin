@@ -12,6 +12,11 @@ import { callAI } from "../utils/apiClient.js"
 export const activeConversations = new Map()
 // 节流: key: `${groupId}_${userId}`, value: lastCallTime（handleRandomReply 也会读写，故导出）
 export const trackingThrottle = new Map()
+// strict 追踪回复去抖：key `${groupId}_${userId}` -> 该会话最近一条进入追踪判断的消息的单调序号。
+// 用递增序号而非时间戳，避免同毫秒两条消息序号相等导致都触发。去抖醒来后若序号已被更晚
+// 的消息刷新，则让步本条，只由最后一条触发回复（合并连发防刷屏）。
+export const trackingLastMsgAt = new Map()
+let trackingSeqCounter = 0
 const pendingJudgments = [] // 批量判断队列
 let batchTimer = null // 批量处理定时器
 // smart 模式：每群独立的频率状态，进程内 Map，重启清零
@@ -23,6 +28,9 @@ const consecutiveInterrupts = new Map() // groupId -> count
 // 禁言状态短期缓存：避免每条群消息都查一次 ws RPC pickMember.getInfo()
 const mutedStatusCache = new Map() // groupId -> { isMuted, at }
 const MUTED_CACHE_TTL_MS = 30000
+// strict 追踪判断 / smart Gate 的 trackAi 调用超时（毫秒）。
+// trackAi 中转卡住时，避免 addToBatchJudgment 的 Promise 永不 resolve 导致处理协程泄漏。
+const TRACK_AI_TIMEOUT_MS = 15000
 let activeChatLruTimer = null // 全局 24h LRU 扫描定时器，进程内单例
 
 export const conversationTrackerMethods = {
@@ -90,6 +98,7 @@ export const conversationTrackerMethods = {
       if (conv?.timer === timer) {
         activeConversations.delete(conversationKey)
         trackingThrottle.delete(conversationKey)
+        trackingLastMsgAt.delete(conversationKey)
         logger.info(`[会话追踪] ${conversationKey} 超时，已清除`)
       }
     }, timeout)
@@ -101,6 +110,42 @@ export const conversationTrackerMethods = {
       ...newData,
       timer
     })
+  },
+
+  /**
+   * 登记本条追踪消息为该会话最新，返回其单调序号。
+   * 连发时后一条会拿到更大序号并覆盖登记，使前一条的去抖检测到"还有新消息"而让步。
+   * @param {string} conversationKey `${groupId}_${userId}`
+   * @returns {number} 本条消息的单调序号
+   */
+  markTrackingArrival(conversationKey) {
+    const seq = ++trackingSeqCounter
+    trackingLastMsgAt.set(conversationKey, seq)
+    return seq
+  },
+
+  /**
+   * strict 追踪回复去抖：判定为"在跟 bot 说话"后、真正触发 handleTool 前调用。
+   * 等待 debounceMs 后看本条的序号是否仍是该会话最新：
+   * - 已被更晚消息刷新（用户还在连发）→ 返回 false，让步给后面那条，避免对每条各回一次刷屏；
+   * - 仍是最新（用户停下来了）→ 返回 true，由本条合并回复一次（handleTool 自带群历史，能看到连发的全部消息）。
+   * debounceMs<=0 时视为关闭去抖，直接放行。
+   * @param {string} conversationKey `${groupId}_${userId}`
+   * @param {number} seq markTrackingArrival 返回的本条序号
+   */
+  async applyTrackingReplyDebounce(conversationKey, seq) {
+    const debounceMs = Math.max(0, Number(this.config.conversationTrackingReplyDebounceMs) || 0)
+    if (debounceMs <= 0) return true
+
+    await new Promise(r => setTimeout(r, debounceMs))
+
+    // 等待期间有更晚的同会话消息进来（序号更大）→ 让步（那条会自己走去抖）
+    const latest = trackingLastMsgAt.get(conversationKey) || 0
+    if (latest > seq) {
+      logger.info(`[追踪去抖] ${conversationKey} 检测到连发新消息，让步本条，由最后一条合并回复`)
+      return false
+    }
+    return true
   },
 
   /**
@@ -324,6 +369,34 @@ export const conversationTrackerMethods = {
     return text
   },
 
+  /**
+   * 收集群消息进复读检测滑动窗口（存于 smart state 的 recentMessages，两种模式共用同一份状态）。
+   * strict/smart 都在各自入口调用，让复读跟读在两种模式下都能生效。
+   */
+  collectRepeatMessage(e) {
+    const groupId = e?.group_id
+    if (!groupId) return
+    const text = (typeof e?.msg === 'string' ? e.msg : '').trim()
+    if (!text) return
+    const state = this.getSmartState(groupId)
+    state.recentMessages = (state.recentMessages || []).slice(-9)
+    state.recentMessages.push({ userId: e.user_id, text, at: Date.now() })
+  },
+
+  /**
+   * 复读检测 + 跟发的统一入口，两种模式共用。命中并跟发返回 true（调用方应停止后续处理）。
+   * 复用 smart state（recentMessages / lastRepeatJoinAt / recentReplyTimestamps）——
+   * strict 模式下这些字段仅供复读自用，不参与 strict 主流程。
+   */
+  async tryJoinGroupRepeat(e) {
+    const groupId = e?.group_id
+    if (!groupId) return false
+    const state = this.getSmartState(groupId)
+    const repeatText = this.detectGroupRepeat(e, state)
+    if (!repeatText) return false
+    return await this.joinRepeat(e, state, repeatText)
+  },
+
   // ==================== smart 模式：Timing Gate 触发 ====================
 
   /**
@@ -433,12 +506,8 @@ export const conversationTrackerMethods = {
       // 活跃度采样移到入口锁外，避免抢锁失败时漏统计（影响 Gate 看到的 5min 消息数）
       state.recentIncomingTimestamps = (state.recentIncomingTimestamps || []).filter(t => t > Date.now() - 300000)
       state.recentIncomingTimestamps.push(Date.now())
-      // 复读检测用的最近消息 deque（保留最近 10 条文本）
-      const repeatText = (typeof e?.msg === 'string' ? e.msg : '').trim()
-      if (repeatText) {
-        state.recentMessages = (state.recentMessages || []).slice(-9)
-        state.recentMessages.push({ userId: e.user_id, text: repeatText, at: Date.now() })
-      }
+      // 复读检测用的最近消息 deque（收集逻辑抽到 collectRepeatMessage，strict/smart 共用）
+      this.collectRepeatMessage(e)
     }
     // 入口锁：该群已经有一个 handleRandomReplySmart 正在跑（Gate / debounce / handleTool 任一阶段）→ 让步本条
     // 必须在任何 await 之前同步检查并 set，防止 await checkTriggers 期间多个调用并发通过
@@ -514,10 +583,7 @@ export const conversationTrackerMethods = {
           || (smartCfg.mentionedNameReply && e.msg && Bot.nickname &&
               String(e.msg).toLowerCase().includes(String(Bot.nickname).toLowerCase()))
         if (!hasForceSignal) {
-          const repeatText = this.detectGroupRepeat(e, state)
-          if (repeatText) {
-            return await this.joinRepeat(e, state, repeatText)
-          }
+          if (await this.tryJoinGroupRepeat(e)) return true
         }
       }
 
@@ -978,6 +1044,8 @@ ${specialSignalsBlock}
    * @param {Array} chatHistory - 对话历史数组 [{role: 'bot'|'user', content: '...'}]
    */
   async isUserTalkingToBot(userMessage, chatHistory = []) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), TRACK_AI_TIMEOUT_MS)
     try {
       const botName = Bot.nickname || '机器人'
 
@@ -1017,7 +1085,8 @@ ${specialSignalsBlock}
             role: "user",
             content: `【近期对话记录】\n${historyText}\n\n【用户新消息】\n${userMessage}\n\n这条新消息是在跟机器人说话吗？`
           }
-        ]
+        ],
+        { signal: controller.signal }
       )
 
       if (result.error) return false // 请求失败时默认不触发
@@ -1028,6 +1097,8 @@ ${specialSignalsBlock}
     } catch (error) {
       logger.error('[会话追踪] AI判断失败:', error)
       return false // 出错时默认不触发
+    } finally {
+      clearTimeout(timeoutId)
     }
   },
 
@@ -1073,13 +1144,15 @@ ${specialSignalsBlock}
    * 批量判断多条消息是否在跟机器人对话
    */
   async batchIsUserTalkingToBot(batch) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), TRACK_AI_TIMEOUT_MS)
     try {
       const botName = Bot.nickname || '机器人'
 
-      // 为每条消息生成唯一标识
+      // 为每条消息生成唯一标识（含 groupId，避免跨群同 userId 碰撞）
       const batchWithIds = batch.map((item, i) => ({
         ...item,
-        id: `MSG_${i + 1}_${item.e?.user_id || 'unknown'}`
+        id: `MSG_${i + 1}_${item.e?.group_id || 'g'}_${item.e?.user_id || 'unknown'}`
       }))
 
       const messagesText = batchWithIds.map(item => {
@@ -1118,19 +1191,21 @@ ${recentHistory || '(无)'}
 - 无对话历史且消息内容与机器人无关
 
 返回JSON对象，key为消息ID，value为判断结果。
-示例: {"MSG_1_12345": true, "MSG_2_67890": false}
+示例: {"MSG_1_123_12345": true, "MSG_2_123_67890": false}
 只返回JSON对象，不要其他内容。`
           },
           {
             role: "user",
             content: `分别判断以下${batchWithIds.length}条来自不同用户的消息:\n\n${messagesText}\n\n返回JSON对象:`
           }
-        ]
+        ],
+        { signal: controller.signal }
       )
 
       if (result.error) {
-        logger.error('[批量判断] API请求失败:', result.error)
-        return this.fallbackToSingleJudgment(batch)
+        // API 错误/超时：逐条 fallback 只会重复触发同样的故障（最坏 15×N 秒），直接全判 false
+        logger.error('[批量判断] API请求失败，跳过逐条回退，全部按不触发处理:', result.error)
+        return batch.map(() => false)
       }
 
       let content = result?.choices?.[0]?.message?.content?.trim() || '{}'
@@ -1164,6 +1239,8 @@ ${recentHistory || '(无)'}
     } catch (error) {
       logger.error('[批量判断] 解析失败:', error)
       return this.fallbackToSingleJudgment(batch)
+    } finally {
+      clearTimeout(timeoutId)
     }
   },
 

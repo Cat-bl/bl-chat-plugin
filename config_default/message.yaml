@@ -18,6 +18,9 @@ pluginSettings:
   conversationTrackingTimeout: 2
   conversationTrackingThrottle: 3
   batchJudgmentDelay: 10
+  # 追踪模式回复去抖（毫秒）：判定为"在跟 bot 说话"后，先等这段时间看用户是否还在连发，
+  # 期间有新消息则让步给后面那条，只在用户停下来后回复一次（合并连发，防刷屏）。0=关闭。
+  conversationTrackingReplyDebounceMs: 1500
   # 对话触发模式：strict=严格模式（必须 @/前缀才回，默认）；smart=智能模式（按 talkValue 频率让 Gate 子代理判断是否插话）
   chatTriggerMode: strict
   # smart 模式专属配置

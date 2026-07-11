@@ -86,7 +86,7 @@ export async function isTencentImageUrlAvailable(url) {
   try {
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
-      timeout: 8000,
+      timeout: 5000,
       maxRedirects: 5,
       maxBodyLength: 15 * 1024 * 1024,
       validateStatus: status => status >= 200 && status <= 500
@@ -157,14 +157,22 @@ export async function refreshTencentImageUrl(url, fid = null) {
 
   const rkeys = await getNapcatRKeys();
   const candidates = buildTencentImageCandidates(url, fid, rkeys);
+  if (!candidates.length) return url;
 
-  for (const candidate of candidates) {
-    if (await isTencentImageUrlAvailable(candidate)) {
-      return candidate;
-    }
+  // 并行探测所有候选，取第一个可用的。
+  // 原实现是 for 串行 await，rkey 过期时每个候选各超时 5s，7+ 个候选串行累加可达 35~56s，
+  // 是 "@ 带图消息回复慢一分钟" 的主因。并行后最坏耗时 = 单个超时（5s）。
+  const probes = candidates.map(candidate =>
+    isTencentImageUrlAvailable(candidate).then(ok => {
+      if (ok) return candidate
+      throw new Error('unavailable')
+    })
+  );
+  try {
+    return await Promise.any(probes);
+  } catch {
+    return url;
   }
-
-  return url;
 }
 
 export async function normalizeImageUrls(urls = []) {

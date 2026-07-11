@@ -684,6 +684,10 @@ class MemoryExtractor {
     const cfg = this.config.embeddingAiConfig || {}
     const hash = sha256(`${cfg.embeddingApiModel || "text-embedding-3-small"}:${text}`)
 
+    // embedding 请求加超时：语义检索时此调用在 handleTool 对话准备链里串行阻塞，
+    // 无超时时 embedding 服务半挂会拖住整个回复（表现为"接口没问题但回复要一分钟"）
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 8000)
     try {
       const response = await fetch(cfg.embeddingApiUrl, {
         method: "POST",
@@ -694,7 +698,8 @@ class MemoryExtractor {
         body: JSON.stringify({
           model: cfg.embeddingApiModel || "text-embedding-3-small",
           input: text
-        })
+        }),
+        signal: controller.signal
       })
 
       if (!response.ok) {
@@ -708,6 +713,8 @@ class MemoryExtractor {
     } catch (error) {
       logger?.warn?.(`[MemoryExtractor] 已跳过 embedding：${error.message}`)
       return { embedding: null, embeddingHash: null }
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
 
