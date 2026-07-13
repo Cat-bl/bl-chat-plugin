@@ -1,6 +1,7 @@
 import { AbstractTool } from "./AbstractTool.js"
 import { emojiPackManager } from "../../utils/EmojiPackManager.js"
 import { pluginBridge } from "../../utils/pluginBridge.js"
+import { sanitizeFinalReplyText } from "../../core/pseudoToolSanitizer.js"
 import fs from "fs"
 
 function sleep(ms) {
@@ -74,13 +75,13 @@ export class SendLocalEmojiTool extends AbstractTool {
     }
 
     const rawFollowUp = typeof opts.followUpText === "string" ? opts.followUpText.trim() : ""
-    const followUpText = rawFollowUp ? rawFollowUp.slice(0, 80) : ""
+    const followUpText = rawFollowUp ? sanitizeFinalReplyText(rawFollowUp).slice(0, 80) : ""
 
     let textSent = false
     try {
       if (followUpText) {
         const instance = pluginBridge.instance
-        if (instance?.sendSegmentedMessage && followUpText.includes("\n")) {
+        if (instance?.sendSegmentedMessage) {
           await instance.sendSegmentedMessage(e, followUpText, 0)
         } else {
           await e.reply(followUpText)

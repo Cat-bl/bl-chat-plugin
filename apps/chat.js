@@ -189,6 +189,7 @@ export class ChatPlugin extends plugin {
     try {
       const wrapped = Object.create(anchor)
       wrapped.msg = `[系统主动触发 来自 ${opts.source || '插件'}] ${intent}`
+      wrapped._smartOriginKey = `${groupId}:proactive:${randomUUID()}`
       const mode = String(this.config?.chatTriggerMode || 'strict').toLowerCase()
       if (mode === 'smart') {
         const state = this.getSmartState(groupId)
@@ -618,6 +619,7 @@ export class ChatPlugin extends plugin {
       return false
     }
     activeGroupChatCounts.set(e.group_id, activeChats + 1)
+    try { e._conversationProducedOutput = false } catch {}
 
     try {
       if (this.localToolsReadyPromise) await this.localToolsReadyPromise
@@ -985,6 +987,9 @@ export class ChatPlugin extends plugin {
         })
       }
       const finalResult = result?.trim() ? result : `工具 ${toolName} 执行成功`
+      if (toolName !== "waitTool" && !isToolResultError(finalResult)) {
+        try { e._conversationProducedOutput = true } catch {}
+      }
       return {
         toolCall,
         toolName,
@@ -1146,6 +1151,7 @@ export class ChatPlugin extends plugin {
     const botMessageId = shouldUseTextImage
       ? await this.sendFinalReplyAsTextImage(e, output)
       : await this.sendSegmentedMessage(e, output)
+    try { e._conversationProducedOutput = true } catch {}
 
     // 更新会话追踪中的对话历史
     if (this.config.conversationTrackingEnabled && e.group_id && e.user_id) {

@@ -5,6 +5,7 @@
 // 以 mixin 形式挂到插件原型上，this 指向插件实例。
 import { extractChatKeywords } from "./chatHeuristics.js"
 import { prefilterMessage as prefilterMessagePure } from "./prefilter.js"
+import { CompletedEventCache, getSmartEventKey, resolveWaitReplyAction } from "./waitReplyPolicy.js"
 import { callAI } from "../utils/apiClient.js"
 
 // 会话追踪: key: `${groupId}_${userId}`, value: { lastActiveTime, chatHistory: [], timer: null }
@@ -261,7 +262,6 @@ export const conversationTrackerMethods = {
         if (!this.checkGroupPermission(e)) return
         if (await this.isMutedInGroup(e)) return
         if (state.inFlight) return
-        state.forceGateCheck = true
         const wrapped = Object.create(e)
         wrapped._smartWaitRerun = true
         wrapped._deferredReason = 'cold_idle'
@@ -475,6 +475,11 @@ export const conversationTrackerMethods = {
         queuedWhileInFlight: 0,
         queuedForceGateCheck: false,
         waitTimers: new Map(),
+        waitTaskVersions: new Map(),
+        groupContextVersion: 0,
+        userContextVersions: new Map(),
+        latestIncomingEvent: null,
+        completedEvents: new CompletedEventCache(),
         // 拟人化重构新增字段
         conversationPhase: 'cold',        // 'cold' | 'focus' | 'fading'
         phaseUntil: 0,                    // 当前 phase 自动衰减时间戳
@@ -501,8 +506,22 @@ export const conversationTrackerMethods = {
     const state = this.getSmartState(groupId)
     // 记录该群最新消息时间戳给 applyReplyDebounce 用（仅 smart 模式需要，避免 strict 模式持续累积内存）
     const isSyntheticSmartEvent = e?._smartWaitRerun || e?._smartQueuedRerun || e?._proactiveReply
+    if (!isSyntheticSmartEvent && !e?._smartOriginKey) {
+      try {
+        e._smartOriginKey = `${groupId}:event:${(state.groupContextVersion || 0) + 1}`
+      } catch {}
+    }
+    const eventKey = getSmartEventKey(e)
+    if (isSyntheticSmartEvent && state.completedEvents.has(eventKey)) {
+      logger.info(`[Smart去重] group=${groupId} message_id=${e.message_id} 已完成回复，跳过合成事件重复处理`)
+      return false
+    }
     if (!isSyntheticSmartEvent) {
       lastIncomingMsgAt.set(groupId, Date.now())
+      state.groupContextVersion = (state.groupContextVersion || 0) + 1
+      const contextUserKey = String(e.user_id || '')
+      state.userContextVersions.set(contextUserKey, (state.userContextVersions.get(contextUserKey) || 0) + 1)
+      state.latestIncomingEvent = e
       // 活跃度采样移到入口锁外，避免抢锁失败时漏统计（影响 Gate 看到的 5min 消息数）
       state.recentIncomingTimestamps = (state.recentIncomingTimestamps || []).filter(t => t > Date.now() - 300000)
       state.recentIncomingTimestamps.push(Date.now())
@@ -707,7 +726,11 @@ export const conversationTrackerMethods = {
           state.recentReplyTimestamps = (state.recentReplyTimestamps || []).slice(0, -1)
           return false
         }
-        return await this.handleTool(e)
+        const toolResult = await this.handleTool(e)
+        if (e?._conversationProducedOutput === true && eventKey) {
+          state.completedEvents.add(eventKey)
+        }
+        return toolResult
       }
       if (decision === 'wait') {
         const sec = Math.max(1, Math.min(60, Number(gateResult.wait_seconds) || 5))
@@ -715,7 +738,7 @@ export const conversationTrackerMethods = {
         state.forceContinue = false
         state.forceGateCheck = false
         state.consecutiveNoAction = 0   // wait 不是冷漠，清零计数避免跨 wait 累积误降级
-        this.scheduleWaitReply(e, sec, 'gate_wait')
+        this.scheduleWaitReply(e, sec, 'gate_wait', 'gate')
         return false
       }
       // no_action
@@ -997,7 +1020,7 @@ ${specialSignalsBlock}
   /**
    * 安排 N 秒后强制再触发一轮 Gate，让 LLM 决定要不要补一句（wait 工具/Gate wait 决策共用）
    */
-  scheduleWaitReply(e, seconds, reason) {
+  scheduleWaitReply(e, seconds, reason, waitKind = 'tool') {
     const groupId = e.group_id
     if (!groupId) {
       logger.warn(`[WaitTool] 私聊场景暂不支持自动续话: user=${e.user_id}`)
@@ -1007,8 +1030,14 @@ ${specialSignalsBlock}
     const userKey = `${groupId}_${e.user_id}`
     const old = state.waitTimers.get(userKey)
     if (old) clearTimeout(old)
+    const taskVersion = (state.waitTaskVersions.get(userKey) || 0) + 1
+    state.waitTaskVersions.set(userKey, taskVersion)
+    const scheduledGroupVersion = state.groupContextVersion || 0
+    const versionUserKey = String(e.user_id || '')
+    const scheduledUserVersion = state.userContextVersions.get(versionUserKey) || 0
 
     const timer = setTimeout(async () => {
+      if (state.waitTaskVersions.get(userKey) !== taskVersion) return
       state.waitTimers.delete(userKey)
       // 触发时再次校验：模式可能已切回 strict、bot 可能已被禁言、群可能已退出白名单
       const mode = String(this.config?.chatTriggerMode || 'strict').toLowerCase()
@@ -1016,20 +1045,32 @@ ${specialSignalsBlock}
         logger.info(`[WaitTool] group=${groupId} 已切出 smart 模式，取消续话`)
         return
       }
-      if (!this.checkGroupPermission(e)) {
+      const action = resolveWaitReplyAction({
+        kind: waitKind,
+        scheduledUserVersion,
+        currentUserVersion: state.userContextVersions.get(versionUserKey) || 0,
+        scheduledGroupVersion,
+        currentGroupVersion: state.groupContextVersion || 0
+      })
+      if (action === 'cancel') {
+        logger.info(`[WaitTool] group=${groupId} user=${e.user_id} 用户已有新消息，取消旧续话`)
+        return
+      }
+      const targetEvent = action === 'use_latest' ? state.latestIncomingEvent : e
+      if (!targetEvent?.group_id) return
+      if (!this.checkGroupPermission(targetEvent)) {
         logger.info(`[WaitTool] group=${groupId} 不在白名单，取消续话`)
         return
       }
-      if (await this.isMutedInGroup(e)) {
+      if (await this.isMutedInGroup(targetEvent)) {
         logger.info(`[WaitTool] group=${groupId} 被禁言，取消续话`)
         return
       }
-      state.forceContinue = false
-      state.forceGateCheck = true
       logger.info(`[WaitTool] group=${groupId} user=${e.user_id} fired after ${seconds}s reason=${reason || ''}`)
       try {
-        const wrapped = Object.create(e)
+        const wrapped = Object.create(targetEvent)
         wrapped._smartWaitRerun = true
+        wrapped._proactiveReply = true
         await this.handleRandomReplySmart(wrapped)
       } catch (err) {
         logger.error(`[WaitTool] 续话失败:`, err)
