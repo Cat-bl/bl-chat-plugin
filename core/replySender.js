@@ -71,7 +71,7 @@ export const replySenderMethods = {
         try {
           const { hasAt } = await this.convertAtInString(output, groupForAt)
           if (hasAt) {
-            const segments = this.splitMessage(output)
+            const segments = this.getReplySegments(output)
             let lastMessageId = null
             for (let i = 0; i < segments.length; i++) {
               const seg = segments[i]?.trim()
@@ -132,7 +132,7 @@ export const replySenderMethods = {
         return lastMessageId
       }
 
-      const segments = this.splitMessage(output)
+      const segments = this.getReplySegments(output)
       for (let i = 0; i < segments.length; i++) {
         if (segments[i]?.trim()) {
           const quote = shouldQuote && i === 0
@@ -168,6 +168,15 @@ export const replySenderMethods = {
       const res = await e.reply(output)
       return res?.message_id
     }
+  }
+,
+  getReplySegments(output) {
+    // 分段总开关关闭时：大模型返回什么就整条发，但含换行(\n)仍按换行分段（不受开关控制）
+    if (this.config?.segmentedReplyEnabled === false) {
+      if (!output.includes("\n")) return [output]
+      return output.split("\n").map(s => s.trim()).filter(s => s)
+    }
+    return this.splitMessage(output)
   }
 ,
   splitMessage(text) {
