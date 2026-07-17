@@ -128,6 +128,11 @@ export function sanitizeFinalReplyText(content) {
   output = output.replace(/^\s*```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```\s*$/g, "$1").trim()
   output = output.replace(/^\s*`([^`]+)`\s*$/g, "$1").trim()
 
+  // 剥离模型模仿"群消息上下文格式"吐出的引用前缀，如 [回复 昵称的消息: "原文内容"]。
+  // 该格式仅用于让模型理解上下文（见 core/messageBuilder.js#buildMessageContent 与 core/prompts.js），
+  // 绝不应出现在最终回复里。放在这个唯一发送闸门，保证所有回复路径（工具回复/直接回复/表情包 followUp）都覆盖。
+  output = output.replace(/^[ \t]*[\[【]\s*回复[^\n\]】]*?的消息\s*[:：][^\n\]】]*[\]】][ \t]*/gm, "").trim()
+
   const lines = output.split("\n")
   const sanitizedLines = lines
     .map(line => sanitizePseudoToolLine(line))
