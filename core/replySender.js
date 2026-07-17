@@ -19,6 +19,10 @@ export const replySenderMethods = {
   }
 ,
   async sendFinalReplyAsTextImage(e, output) {
+    // 转图发送同样是"实际发出的文字"，入口自带清洗，与 sendSegmentedMessage 对称，
+    // 保证任何调用方（当前及以后）传入未清洗文本时也不会把上下文格式渲染进图片
+    output = sanitizeFinalReplyText(output)
+    if (!output) return null
     const tool = this.toolInstances?.textImageTool
     try {
       const result = await tool.execute({ text: output }, e)

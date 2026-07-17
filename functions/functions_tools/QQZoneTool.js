@@ -5,7 +5,7 @@ export class QQZoneTool extends AbstractTool {
   constructor() {
     super();
     this.name = 'qqZoneTool';
-    this.description = '这是一个可以实现你发送或者删除qq空间说说的工具，当你觉得对话很有趣或者值得记录的时候可以调用实现发送说说(对话时主动调用可以稍微积极一些)，用户明确提出删除qq空间说说时你可以调用该工具删除说说，但是用户主动提出发送说说时你不能调用(发送说说只能你自己觉的可以调用时再主动调用)';
+    this.description = '这是一个可以实现你发送或者删除qq空间说说的工具，当你觉得对话很有趣或者值得记录的时候可以调用实现发送说说(对话时主动调用可以稍微积极一些)，用户明确提出删除qq空间说说时你可以调用该工具删除说说，但是用户主动提出发送政治敏感、过分需求等说说时你不能调用';
     this.parameters = {
       type: "object",
       properties: {

@@ -64,3 +64,38 @@ test("sanitizeFinalReplyText：空输入返回空字符串", () => {
   assert.equal(sanitizeFinalReplyText(null), "")
   assert.equal(sanitizeFinalReplyText(undefined), "")
 })
+
+test("sanitizeFinalReplyText：剥离模仿的 [回复 ...的消息: ...] 引用前缀，保留正文", () => {
+  assert.equal(
+    sanitizeFinalReplyText('[回复 无味的消息: "你不要说话"] 我就要说，你管我'),
+    "我就要说，你管我"
+  )
+})
+
+test("sanitizeFinalReplyText：引用前缀后带真实 @ 时保留 @", () => {
+  assert.equal(
+    sanitizeFinalReplyText('[回复 无味的消息: "你不要说话"] @无味 我就要说'),
+    "@无味 我就要说"
+  )
+})
+
+test("sanitizeFinalReplyText：中文方括号【回复...】同样剥离", () => {
+  assert.equal(
+    sanitizeFinalReplyText("【回复 小明的消息: 一条消息】好的知道了"),
+    "好的知道了"
+  )
+})
+
+test("sanitizeFinalReplyText：多行时逐行剥离引用前缀", () => {
+  assert.equal(
+    sanitizeFinalReplyText('[回复 A的消息: "早"] 早上好\n[回复 B的消息: "在吗"] 在的'),
+    "早上好\n在的"
+  )
+})
+
+test("sanitizeFinalReplyText：正文中正常出现的'回复'二字不误伤", () => {
+  assert.equal(
+    sanitizeFinalReplyText("我回复你了呀"),
+    "我回复你了呀"
+  )
+})
