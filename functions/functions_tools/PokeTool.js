@@ -269,6 +269,7 @@ export class PokeTool extends AbstractTool {
 
       return {
         action: 'poke',
+        info: "戳一戳操作完成，这是静默动作，实际文字回复时不要再强调一遍戳了某个人，例如：戳你一下，戳了你一下...等",
         success: {
           count: successResults.length,
           targets: successResults.map(r => ({
