@@ -37,6 +37,12 @@ export default [
     componentProps: { min: 1, max: 20, placeholder: "3" }
   },
   {
+    field: "segmentedReplyEnabled",
+    label: "分段发送",
+    component: "Switch",
+    bottomHelpMessage: "开启时按标点/换行把回复拆成多条消息（拟人化，默认开启）；关闭则大模型返回什么就整条发送。注意：即使关闭，回复含换行时仍会按换行分段，不受此开关控制"
+  },
+  {
     field: "triggerPrefixes",
     label: "触发关键词",
     component: "GTags",

@@ -843,6 +843,7 @@ const result = await pluginBridge.instance?.enqueueProactiveTask(
 | `allowedGroups` | string[] | `["973682389"]` | **白名单群号**：允许使用 AI 功能的群组 ID |
 | `whitelistRejectMsg` | string | `"本群未开启此功能哦~"` | **拒绝提示**：非白名单群组的提示消息 |
 | `concurrentLimit` | int | `3` | **并发数限制**：同时处理的最大请求数量 |
+| `segmentedReplyEnabled` | boolean | `true` | **分段发送总开关**：开启时按标点/换行把回复拆成多条消息发送（拟人化）；关闭则大模型返回什么就整条发送。注意：即使关闭，回复含换行 `\n` 时仍会按换行分段，不受此开关控制 |
 
 ---
 

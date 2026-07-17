@@ -14,6 +14,9 @@ pluginSettings:
   groupMaxMessages: 30
   groupChatMemoryDays: 1
   maxToolRounds: 5
+  # 分段发送总开关：true=按标点/换行把回复拆成多条消息发送（拟人化，默认）；false=大模型返回什么就整条发送不分段。
+  # 注意：即使关闭，只要大模型回复里含换行(\n)仍会按换行分段发送，不受此开关控制。
+  segmentedReplyEnabled: true
   conversationTrackingEnabled: false
   conversationTrackingTimeout: 2
   conversationTrackingThrottle: 3
@@ -42,7 +45,7 @@ pluginSettings:
     maxConsecutiveInterrupts: 3          # 同一群被新消息连续打断的最大次数；超过后强制走完不再让步；0=每次都让步
     activeChatTtlHours: 24               # 群超过这么多小时没有新消息后从内存状态淘汰
     proactiveReplyNoQuote: true          # smart 模式 Gate 主动触发的回复不带"引用消息"格式（更像群友自然插话，而非"回复某人"）；@/前缀触发的回复仍按正常引用概率
-    typingSpeed: 0                       # 拟人化打字速度：每秒发送 N 个字符（调节段间延迟，两种模式都生效）；0=默认公式(1s起步+字符延展)，建议 8-25
+    typingSpeed: 1                       # 拟人化打字速度：每秒发送 N 个字符（调节段间延迟，两种模式都生效）；0=默认公式(1s起步+字符延展)，建议 8-25
     # ─── 拟人化对话焦点（FOCUS/FADING/COLD 三态机）─────────────────
     focusDurationMs: 180000              # bot 主动回复后 FOCUS 持续时间（保守 3 分钟，期间每条新消息都强制走 Gate）
     fadingDurationMs: 90000              # FOCUS 降级后 FADING 余热持续时间（1.5 分钟，期间阈值减半）

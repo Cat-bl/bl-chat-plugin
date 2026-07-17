@@ -75,7 +75,7 @@ export class SendLocalEmojiTool extends AbstractTool {
     }
 
     const rawFollowUp = typeof opts.followUpText === "string" ? opts.followUpText.trim() : ""
-    const followUpText = rawFollowUp ? sanitizeFinalReplyText(rawFollowUp).slice(0, 80) : ""
+    const followUpText = rawFollowUp ? sanitizeFinalReplyText(rawFollowUp) : ""
 
     let textSent = false
     try {
