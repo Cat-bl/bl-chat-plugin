@@ -217,6 +217,9 @@ export const messageBuilderMethods = {
 
             const quotedMessageId = reply.message_id ? `(消息ID:${reply.message_id})` : ''
 
+            const botId = e?.self_id || e?.bot?.uin || Bot.uin
+            const isQuotingSelf = String(quotedSender.user_id) === String(botId)
+
             const parts = []
             if (quotedMsg) parts.push(`"${quotedMsg}"`)
             if (forwardContent) parts.push(forwardContent)
@@ -235,7 +238,9 @@ export const messageBuilderMethods = {
             }
             const quotedDescription = parts.length > 0 ? parts.join("，以及") : "一条消息"
 
-            quoteContent = `[回复 ${quotedNickname}${quotedMessageId}的消息: ${quotedDescription}] `
+            quoteContent = isQuotingSelf
+              ? `[回复你自己(${quotedNickname})${quotedMessageId}之前发的消息: ${quotedDescription}] `
+              : `[回复 ${quotedNickname}${quotedMessageId}的消息: ${quotedDescription}] `
           }
         }
       } catch (error) {
