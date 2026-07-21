@@ -2,6 +2,7 @@ import { dependencies } from '../dependence/dependencies.js';
 const { axios, moment } = dependencies;
 import schedule from 'node-schedule';
 import { refreshTencentImageUrl } from './fileUtils.js';
+import { scanRedisKeys, deleteRedisKeys } from './redisScan.js';
 
 // 同 key 写队列（模块级：本类会被多处 new，含 Yunzai 每条消息实例化的插件，
 // 实例级锁跨实例不生效）。串行化 读-改-写，避免并发记录互相覆盖丢消息。
@@ -50,41 +51,13 @@ export class MessageManager {
    * 清除所有消息历史记录
    * @returns {Promise<void>}
    */
+  // 保留实例方法签名（sharedState.messageManager 对外暴露），实现委托给 utils/redisScan.js 共享版
   async scanRedisKeys(pattern) {
-    try {
-      if (typeof redis.scanIterator === "function") {
-        const keys = [];
-        for await (const key of redis.scanIterator({ MATCH: pattern, COUNT: 200 })) {
-          if (Array.isArray(key)) keys.push(...key);
-          else keys.push(key);
-        }
-        return keys;
-      }
-
-      if (typeof redis.scan === "function") {
-        const keys = [];
-        let cursor = "0";
-        do {
-          const [nextCursor, batch = []] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 200);
-          cursor = String(nextCursor);
-          keys.push(...batch);
-        } while (cursor !== "0");
-        return keys;
-      }
-    } catch (error) {
-      logger.warn(`[MessageManager] SCAN 扫描失败，回退使用 KEYS：${pattern}，原因：${error.message}`);
-    }
-
-    return await redis.keys(pattern);
+    return scanRedisKeys(pattern, 'MessageManager');
   }
 
   async deleteRedisKeys(keys = []) {
-    for (let i = 0; i < keys.length; i += 200) {
-      const chunk = keys.slice(i, i + 200).filter(Boolean);
-      if (chunk.length) {
-        await redis.del(...chunk);
-      }
-    }
+    return deleteRedisKeys(keys);
   }
 
   async clearAllMessages() {

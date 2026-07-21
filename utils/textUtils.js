@@ -1,3 +1,8 @@
+// 工具全部执行完成后插入的收尾系统提示。
+// apiClient#moveFinalToolPromptToEnd 通过本常量识别该消息并移到末尾——
+// 修改文案只改这里，不要在别处硬编码这段文字的片段做匹配。
+export const FINAL_TOOL_PROMPT = "【系统提示】: 工具已全部执行完成，请直接用自然口语回复用户结果，你只负责自然口语对话没有调用工具的功能。回复语气可以符合人设，但内容必须与上面工具的实际执行结果一致：已成功执行的，不得声称你没做、拒绝做或做不到；执行失败的，如实说明没成功。禁止输出任何代码格式如print()、tool_name()、|*...*|等。"
+
 /**
  * 从消息列表中移除工具相关的系统提示词
  * @param {Array} messages - 消息列表
@@ -10,8 +15,7 @@ export const removeToolPromptsFromMessages = (messages = [], hasExecutedTools = 
         if (msg.role === "assistant" && msg.content?.includes("【系统提示】")) {
             if (hasExecutedTools) {
                 // 有工具执行:改写成要求忠实于结果的提示
-                const content = "【系统提示】: 工具已全部执行完成，请直接用自然口语回复用户结果，你只负责自然口语对话没有调用工具的功能。回复语气可以符合人设，但内容必须与上面工具的实际执行结果一致：已成功执行的，不得声称你没做、拒绝做或做不到；执行失败的，如实说明没成功。禁止输出任何代码格式如print()、tool_name()、|*...*|等。"
-                return { ...msg, role: "system", content }
+                return { ...msg, role: "system", content: FINAL_TOOL_PROMPT }
             } else {
                 // 没有工具执行:直接删除此消息
                 return null

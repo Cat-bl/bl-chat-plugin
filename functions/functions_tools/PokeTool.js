@@ -51,7 +51,7 @@ export class PokeTool extends AbstractTool {
         throw new Error('找不到OneBotv11 API调用接口');
       }
     } catch (error) {
-      console.error(`调用API ${action} 失败:`, error);
+      logger.error(`调用API ${action} 失败:`, error);
       throw error;
     }
   }
@@ -73,7 +73,7 @@ export class PokeTool extends AbstractTool {
         throw new Error('获取群成员列表失败');
       }
     } catch (error) {
-      console.error('获取群成员列表失败:', error);
+      logger.error('获取群成员列表失败:', error);
       throw error;
     }
   }
@@ -118,7 +118,7 @@ export class PokeTool extends AbstractTool {
       
       return response.status === 'ok';
     } catch (error) {
-      console.error('发送戳一戳失败:', error);
+      logger.error('发送戳一戳失败:', error);
       return false;
     }
   }
@@ -288,7 +288,7 @@ export class PokeTool extends AbstractTool {
         isRandom: !target || random
       };
     } catch (error) {
-      console.error('戳一戳操作失败:', error);
+      logger.error('戳一戳操作失败:', error);
       return `戳一戳操作失败: ${error.message}`;
     }
   }

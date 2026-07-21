@@ -120,19 +120,19 @@ export class AiMindMapTool extends AbstractTool {
       )
 
       if (result.error) {
-        console.error('API请求失败:', result.error)
+        logger.error('API请求失败:', result.error)
         return '生成失败：' + result.error
       }
 
       const markdownContent = result?.choices?.[0]?.message?.content || ''
       // logger.info(markdownContent,77)
       if (!markdownContent) {
-        console.error('API返回空内容');
+        logger.error('API返回空内容');
         return '生成失败，请检查输入或稍后重试';
       }
 
       if (!this.validateMarkdown(markdownContent)) {
-        console.error('无效的Markdown内容:', markdownContent);
+        logger.error('无效的Markdown内容:', markdownContent);
         return '生成失败：Markdown内容无效，请确保包含正确的标题层级';
       }
 
@@ -152,8 +152,8 @@ export class AiMindMapTool extends AbstractTool {
 
       await page.setViewport({ width, height });
 
-      page.on('console', msg => console.log('页面控制台:', msg.text()));
-      page.on('pageerror', err => console.error('页面错误:', err));
+      page.on('console', msg => logger.info('页面控制台:', msg.text()));
+      page.on('pageerror', err => logger.error('页面错误:', err));
 
       // 创建 HTML 页面，确保SVG渲染
       await page.setContent(`
@@ -185,14 +185,14 @@ export class AiMindMapTool extends AbstractTool {
       `, { waitUntil: 'networkidle0' });
       // 等待渲染完成
       await page.waitForFunction('document.querySelector("#markmap").children.length > 0', { timeout: waitTime });
-      console.log('SVG元素已渲染');
+      logger.info('SVG元素已渲染');
 
       // 截图保存为PNG
       const outputPath = './resources/markmap-output.png';
       await page.screenshot({ path: outputPath, fullPage: true, type: 'png' });
 
       await browser.close();
-      console.log(`Markmap 图片已生成到 ${outputPath}`);
+      logger.info(`Markmap 图片已生成到 ${outputPath}`);
 
       // 发送图片
       e.reply(segment.image(outputPath));
@@ -200,7 +200,7 @@ export class AiMindMapTool extends AbstractTool {
       return `Markmap 图片已生成, 我已经发到群聊了`;
 
     } catch (error) {
-      console.error('思维导图生成错误:', error);
+      logger.error('思维导图生成错误:', error);
       return `生成失败: ${error.message}`;
     }
   }
