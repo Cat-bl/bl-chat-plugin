@@ -4,6 +4,7 @@ import { loadData, saveData } from "../utils/redisClient.js"
 import { YTapi } from "../utils/apiClient.js"
 import { mcpManager } from "../utils/MCPClient.js"
 import { pluginBridge } from "../utils/pluginBridge.js"
+import { scanRedisKeys, deleteRedisKeys } from "../utils/redisScan.js"
 import { personProfileInjector } from "../utils/PersonProfileInjector.js"
 import fs from "fs"
 import YAML from "yaml"
@@ -206,41 +207,13 @@ export class ChatPlugin extends plugin {
     }
   }
 
+  // 保留实例方法签名（pluginBridge 对外暴露本实例），实现委托给 utils/redisScan.js 共享版
   async scanRedisKeys(pattern) {
-    try {
-      if (typeof redis.scanIterator === "function") {
-        const keys = []
-        for await (const key of redis.scanIterator({ MATCH: pattern, COUNT: 200 })) {
-          if (Array.isArray(key)) keys.push(...key)
-          else keys.push(key)
-        }
-        return keys
-      }
-
-      if (typeof redis.scan === "function") {
-        const keys = []
-        let cursor = "0"
-        do {
-          const [nextCursor, batch = []] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 200)
-          cursor = String(nextCursor)
-          keys.push(...batch)
-        } while (cursor !== "0")
-        return keys
-      }
-    } catch (error) {
-      logger.warn(`[Redis] SCAN 扫描失败，回退使用 KEYS：${pattern}，原因：${error.message}`)
-    }
-
-    return await redis.keys(pattern)
+    return scanRedisKeys(pattern, "Redis")
   }
 
   async deleteRedisKeys(keys = []) {
-    for (let i = 0; i < keys.length; i += 200) {
-      const chunk = keys.slice(i, i + 200).filter(Boolean)
-      if (chunk.length) {
-        await redis.del(...chunk)
-      }
-    }
+    return deleteRedisKeys(keys)
   }
 
   async clearAllMessages() {
@@ -639,7 +612,10 @@ export class ChatPlugin extends plugin {
 
       try {
         const args = msg?.replace(/^#tool\s*/, "").trim() || ""
-        const atQq = e.message.filter(m => m.type === "at" && m.qq !== Bot.uin).map(m => m.qq)
+        // 同 checkTriggers：TRSS 多账号下 Bot.uin 是数组，须用 e.self_id 做字符串比较，
+        // 否则 bot 自己的 @ 会漏进 atQq
+        const selfIdForAt = e?.self_id ?? e?.bot?.uin ?? Bot.uin
+        const atQq = e.message.filter(m => m.type === "at" && String(m.qq) !== String(selfIdForAt)).map(m => m.qq)
         const images = await TakeImages(e)
 
         let videos = []

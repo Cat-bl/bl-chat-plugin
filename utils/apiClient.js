@@ -1,6 +1,7 @@
-import { dependencies } from "../dependence/dependencies.js";
-import { removeToolPromptsFromMessages } from "../utils/textUtils.js"
-const { _path, fetch, fs, path } = dependencies;
+// 直接引 node-fetch 而非经 dependence/dependencies.js（后者静态依赖 Yunzai 核心模块，
+// 会让引用本文件的模块——如 core/conversationTracker——无法脱离 Yunzai 环境单测）
+import fetch from "node-fetch";
+import { removeToolPromptsFromMessages, FINAL_TOOL_PROMPT } from "../utils/textUtils.js"
 
 // logger 引用（假设全局可用，否则需要 import）
 const logger = global.logger || console;
@@ -379,9 +380,10 @@ function moveFinalToolPromptToEnd(messages = []) {
 
     for (const msg of messages) {
         const content = String(msg?.content || "");
+        // 通过共享常量识别收尾提示（textUtils#removeToolPromptsFromMessages 生成的完整文案），
+        // 避免提示词文案与此处的片段匹配各改各的导致静默失效
         const isFinalToolPrompt = msg?.role === "system"
-            && content.includes("工具已全部执行完成")
-            && content.includes("自然口语");
+            && content.includes(FINAL_TOOL_PROMPT);
 
         if (isFinalToolPrompt) {
             finalPrompts.push(msg);
