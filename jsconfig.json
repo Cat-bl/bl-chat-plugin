@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "node",
+    "target": "es2022",
+    "checkJs": false
+  },
+  "exclude": ["node_modules", "database", "resources"]
+}
