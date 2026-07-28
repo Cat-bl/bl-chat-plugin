@@ -1,21 +1,16 @@
 import { checkPendingReminders } from "../functions/functions_tools/ReminderTool.js"
 import { TakeImages } from "../utils/fileUtils.js"
-import { loadData, saveData } from "../utils/redisClient.js"
-import { YTapi } from "../utils/apiClient.js"
 import { mcpManager } from "../utils/MCPClient.js"
 import { pluginBridge } from "../utils/pluginBridge.js"
 import { scanRedisKeys, deleteRedisKeys } from "../utils/redisScan.js"
 import { personProfileInjector } from "../utils/PersonProfileInjector.js"
 import fs from "fs"
-import YAML from "yaml"
 import path from "path"
 import { randomUUID } from "crypto"
 import schedule from 'node-schedule'
 import { parseToolConfigEntry } from "../core/toolConfig.js"
-import { isToolResultError } from "../core/toolResult.js"
 import { buildChatSystemPrompt } from "../core/prompts.js"
 import { initializeSharedState, getSharedState, refreshLocalTools, applyToolRegistrySnapshot } from "../core/sharedState.js"
-import { delay } from "../core/asyncUtils.js"
 import { configManagerMethods } from "../core/configManager.js"
 import { taskStatusMethods } from "../core/taskStatus.js"
 import { toolHistoryMethods } from "../core/toolHistory.js"
@@ -23,20 +18,18 @@ import { tryAutoGrabRedBag } from "../core/redBag.js"
 import { messageBuilderMethods, roleMap } from "../core/messageBuilder.js"
 import { conversationTrackerMethods, activeConversations, trackingThrottle } from "../core/conversationTracker.js"
 import { replySenderMethods } from "../core/replySender.js"
+import { toolExecutorMethods } from "../core/toolExecutor.js"
+import { sessionHistoryMethods } from "../core/sessionHistory.js"
+import { mcpLifecycleMethods, startMcpInit } from "../core/mcpLifecycle.js"
 
 const _path = process.cwd()
 
-
-const activeDedupeToolRuns = new Map()
 
 // 群级并发计数：groupId -> 处理中的对话数。达到 concurrentLimit 时新消息直接不触发（不排队）。
 // 必须放模块级：Yunzai 每条消息都会 new 一个插件实例，实例属性跨消息不共享。
 const activeGroupChatCounts = new Map()
 
 let pluginInitialized = false
-let mcpInitPromise = null
-
-
 
 export class ChatPlugin extends plugin {
   constructor() {
@@ -84,14 +77,13 @@ export class ChatPlugin extends plugin {
 
     if (!pluginInitialized) {
       pluginInitialized = true
-      mcpInitPromise = this.initMCP()
+      startMcpInit(this)
       this.initScheduledTasks()
       this.startActiveChatLruScanner()
     }
 
     pluginBridge.instance = this
   }
-
 
   async refreshLocalToolRegistry(options = {}) {
     const state = await refreshLocalTools(getSharedState(), options)
@@ -158,10 +150,6 @@ export class ChatPlugin extends plugin {
     logger.info('[定时任务] 提醒检查任务已启动（每秒）')
   }
 
-
-
-
-
   /**
    * 外部插件主动触发：注入 intent 到群历史 + 强制下一轮 Gate continue
    * @param {string|number} groupId
@@ -224,10 +212,6 @@ export class ChatPlugin extends plugin {
     }
   }
 
-  getToolRunKey(groupId, userId, toolName) {
-    return `${groupId}:${userId}:${toolName}`
-  }
-
   async beginConversationTask(e) {
     const groupId = e.group_id
     const userId = e.user_id
@@ -263,10 +247,6 @@ export class ChatPlugin extends plugin {
     }
   }
 
-  isDedupeTool(toolName) {
-    return this.dedupeToolNames?.has(toolName)
-  }
-
   /**
    * 群对话并发是否已达上限（concurrentLimit）。
    * 供 handleTool 之前的路径（会话追踪判定 / smart Gate）提前让步，
@@ -284,15 +264,6 @@ export class ChatPlugin extends plugin {
   getGroupChatConcurrency(groupId) {
     const limit = Math.max(1, Number(this.config.concurrentLimit) || 5)
     return { active: activeGroupChatCounts.get(groupId) || 0, limit }
-  }
-
-  syncDedupeToolConfig(toolNames = this.config.oneapi_tools || []) {
-    this.dedupeToolNames = new Set(
-      (Array.isArray(toolNames) ? toolNames : [])
-        .map(item => parseToolConfigEntry(item))
-        .filter(item => item.name && item.dedupe)
-        .map(item => item.name)
-    )
   }
 
   getToolsByName(toolNames, options = {}) {
@@ -352,54 +323,6 @@ export class ChatPlugin extends plugin {
     return this.config.allowedGroups.some(id => String(id) === String(e.group_id))
   }
 
-  async getGroupUserMessages(groupId, userId) {
-    const redisKey = `${this.messageHistoriesRedisKey}:${groupId}:${userId}`
-    const filePath = path.join(this.messageHistoriesDir, `${groupId}_${userId}.json`)
-
-    try {
-      const redisData = await loadData(redisKey, null)
-      if (redisData) return redisData
-
-      const fileData = await fs.promises.readFile(filePath, "utf-8").catch(() => null)
-      if (fileData) {
-        const parsed = JSON.parse(fileData)
-        await saveData(redisKey, filePath, parsed)
-        return parsed
-      }
-      return []
-    } catch (error) {
-      logger.error(`获取消息历史失败:`, error)
-      return []
-    }
-  }
-
-  async saveGroupUserMessages(groupId, userId, messages) {
-    const redisKey = `${this.messageHistoriesRedisKey}:${groupId}:${userId}`
-    const filePath = path.join(this.messageHistoriesDir, `${groupId}_${userId}.json`)
-    // 串行写：saveData 在 redis 挂掉时会降级写同一个文件，并发写会导致 JSON 交错损坏
-    try {
-      await saveData(redisKey, filePath, messages)
-      await fs.promises.writeFile(filePath, JSON.stringify(messages, null, 2), "utf-8")
-    } catch (err) {
-      logger.error(`保存消息历史失败:`, err)
-    }
-  }
-
-  async clearGroupUserMessages(groupId, userId) {
-    const redisKey = `${this.messageHistoriesRedisKey}:${groupId}:${userId}`
-    const filePath = path.join(this.messageHistoriesDir, `${groupId}_${userId}.json`)
-    await Promise.all([
-      redis.del(redisKey),
-      fs.promises.unlink(filePath).catch(() => { })
-    ])
-  }
-
-  async resetGroupUserMessages(groupId, userId) {
-    await this.clearGroupUserMessages(groupId, userId)
-    await this.saveGroupUserMessages(groupId, userId, [])
-  }
-
-
   getProvider() {
     return this.config?.providers?.toLowerCase()
   }
@@ -446,33 +369,6 @@ export class ChatPlugin extends plugin {
   isCommand(e) {
     return e.msg?.startsWith("#")
   }
-
-  filterChatByQQ(chatArray, qqNumber) {
-    const pattern = /\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/
-    const lastIndex = chatArray.reduce((last, curr, i) =>
-      curr.content?.includes(`(qq号: ${qqNumber})`) && pattern.test(curr.content) ? i : last, -1)
-    return lastIndex === -1 ? chatArray : chatArray.slice(0, lastIndex + 1)
-  }
-
-  getOrCreateSession(sessionId, tools) {
-    if (!this.sessionMap.has(sessionId)) {
-      this.sessionMap.set(sessionId, { tools, groupUserMessages: [] })
-    }
-    return this.sessionMap.get(sessionId)
-  }
-
-  clearSession(sessionId) {
-    this.sessionMap.delete(sessionId)
-  }
-
-  trimMessageHistory(messages) {
-    const nonSystem = messages.filter(m => m.role !== "system")
-    if (nonSystem.length <= this.MAX_HISTORY) return messages
-
-    const system = messages.filter(m => m.role === "system")
-    return [...system, ...nonSystem.slice(-this.MAX_HISTORY)]
-  }
-
 
   async handleRandomReply(e) {
     if (!this.config.enabled || !this.checkGroupPermission(e) || this.isCommand(e) || !e.group_id) {
@@ -820,296 +716,6 @@ export class ChatPlugin extends plugin {
     }
   }
 
-
-
-  async retryRequest(requestData, toolContent, retries = 1, toolName) {
-    while (retries >= 0) {
-      try {
-        const response = await YTapi(requestData, this.config, toolContent, toolName)
-        if (response) return response
-      } catch (error) {
-        logger.error(`API请求失败(${retries}):`, error)
-      }
-      retries--
-    }
-    return null
-  }
-
-  /**
-   * 执行工具 - 统一处理本地工具和MCP工具
-   */
-  normalizeAssistantToolMessage(message) {
-    const normalized = {
-      role: "assistant",
-      content: message.content || "",
-      tool_calls: (message.tool_calls || []).map(toolCall => ({
-        id: toolCall.id,
-        type: toolCall.type || "function",
-        function: {
-          name: toolCall.function?.name,
-          arguments: toolCall.function?.arguments || "{}"
-        }
-      }))
-    }
-
-    if (message.reasoning_content) {
-      normalized.reasoning_content = message.reasoning_content
-    }
-
-    return normalized
-  }
-
-  serializeToolResult(result) {
-    if (typeof result === "string") return result
-
-    if (result?.content && Array.isArray(result.content)) {
-      return result.content
-        .map(item => item.type === "text" ? item.text : JSON.stringify(item))
-        .join("\n")
-    }
-
-    return JSON.stringify(result ?? "")
-  }
-
-  async runToolCall(toolCall, e, session, senderRole) {
-    const { type, function: funcData } = toolCall
-    if (type !== "function" || !funcData?.name) return null
-
-    const toolName = funcData.name
-    const isMCPTool = mcpManager.isMCPTool(toolName)
-    const isLocalTool = !isMCPTool && this.toolInstances[toolName]
-    const isValidTool = session.tools?.some(t => t.function?.name === toolName)
-
-    if (!isValidTool || (!isMCPTool && !isLocalTool)) {
-      return {
-        toolCall,
-        toolName,
-        result: `error: tool ${toolName} is not available in this session`,
-        _executed: false
-      }
-    }
-
-    let params
-    try {
-      params = JSON.parse(funcData.arguments || "{}")
-    } catch (error) {
-      return {
-        toolCall,
-        toolName,
-        result: `error: invalid JSON arguments: ${error.message}`,
-        _executed: true
-      }
-    }
-
-    if (toolName === "jinyanTool" && senderRole) {
-      params.senderRole = senderRole
-    }
-    if (toolName === "changeCardTool" && senderRole) {
-      params.senderRole = senderRole
-    }
-
-    const dedupeEnabled = this.isDedupeTool(toolName)
-    const task = session.taskContext || {}
-    const toolRunKey = dedupeEnabled ? this.getToolRunKey(e.group_id, e.user_id, toolName) : ""
-    const toolRunValue = {
-      groupId: e.group_id,
-      userId: e.user_id,
-      messageId: task.messageId || e.message_id || null,
-      toolName,
-      startedAt: Date.now()
-    }
-
-    if (dedupeEnabled) {
-      if (activeDedupeToolRuns.has(toolRunKey)) {
-        return {
-          toolCall,
-          toolName,
-          result: `工具 ${toolName} 正在处理同一用户的上一条请求，已跳过重复调用`,
-          _executed: false
-        }
-      }
-
-      activeDedupeToolRuns.set(toolRunKey, toolRunValue)
-      session.taskDedupeToolTouched = true
-      if (toolRunValue.messageId) {
-        await this.saveTaskStatus({
-          groupId: e.group_id,
-          userId: e.user_id,
-          messageId: toolRunValue.messageId,
-          status: "tool_running",
-          toolName
-        })
-      }
-    }
-
-    try {
-      logger.info(`[工具调用] ${isMCPTool ? "MCP" : "本地"} ${toolName}: ${JSON.stringify(params)}`)
-      const rawResult = isMCPTool
-        ? await this.executeTool(toolName, params, e)
-        : await this.executeTool(this.toolInstances[toolName], params, e)
-      // 本地工具 func 可返回 this.terminal(result) 标记本次为终态（成功后不再请求 LLM 续话）
-      const isTerminal = rawResult && typeof rawResult === "object" && !Array.isArray(rawResult) && rawResult.terminal === true
-      const result = this.serializeToolResult(isTerminal ? rawResult.result : rawResult)
-      if (dedupeEnabled && toolRunValue.messageId) {
-        const failed = isToolResultError(result)
-        await this.saveTaskStatus({
-          groupId: e.group_id,
-          userId: e.user_id,
-          messageId: toolRunValue.messageId,
-          status: failed ? "tool_failed" : "tool_success",
-          toolName,
-          error: failed ? result : ""
-        })
-      }
-      const finalResult = result?.trim() ? result : `工具 ${toolName} 执行成功`
-      if (toolName !== "waitTool" && !isToolResultError(finalResult)) {
-        try { e._conversationProducedOutput = true } catch {}
-      }
-      return {
-        toolCall,
-        toolName,
-        result: finalResult,
-        _executed: true,
-        _terminal: isTerminal
-      }
-    } catch (error) {
-      if (dedupeEnabled && toolRunValue.messageId) {
-        await this.saveTaskStatus({
-          groupId: e.group_id,
-          userId: e.user_id,
-          messageId: toolRunValue.messageId,
-          status: "tool_failed",
-          toolName,
-          error: error.message
-        })
-      }
-      logger.error(`[工具调用] ${toolName} 执行失败:`, error)
-      return {
-        toolCall,
-        toolName,
-        result: `error: ${error.message}`,
-        _executed: true
-      }
-    } finally {
-      if (dedupeEnabled && activeDedupeToolRuns.get(toolRunKey) === toolRunValue) {
-        activeDedupeToolRuns.delete(toolRunKey)
-      }
-    }
-  }
-
-  dedupeToolCalls(toolCalls = []) {
-    const seen = new Set()
-    return toolCalls.filter(toolCall => {
-      const key = `${toolCall.function?.name}:${toolCall.function?.arguments || "{}"}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-  }
-
-  async processToolCalls(message, e, session, groupUserMessages, atQq, senderRole) {
-    const MAX_TOOL_ROUNDS = this.config.maxToolRounds || 5
-    let currentMessage = message
-    let currentMessages = [...groupUserMessages]
-    let round = 0
-    const allToolResults = []
-
-    while (currentMessage.tool_calls?.length && round < MAX_TOOL_ROUNDS) {
-      round++
-      const toolCalls = this.dedupeToolCalls(currentMessage.tool_calls)
-      logger.info(`[工具调用] 第 ${round} 轮，共 ${toolCalls.length} 个工具`)
-
-      currentMessages.push(this.normalizeAssistantToolMessage({
-        ...currentMessage,
-        tool_calls: toolCalls
-      }))
-
-      const validResults = (await Promise.all(
-        toolCalls.map(toolCall => this.runToolCall(toolCall, e, session, senderRole))
-      )).filter(Boolean)
-
-      if (validResults.length === 0) break
-
-      allToolResults.push(...validResults)
-      session.toolName = validResults[validResults.length - 1]?.toolName
-
-      // 批量写工具调用历史（同一条用户消息的多工具会聚合到同一条 record）
-      const recordedItems = validResults
-        .filter(r => r._executed)
-        .map(r => ({ toolName: r.toolName, result: r.result }))
-      if (recordedItems.length) {
-        this.recordToolHistoryBatch({
-          groupId: e.group_id,
-          messageId: e.message_id || null,
-          items: recordedItems
-        }).catch(err => logger?.warn?.(`[工具历史] 批量记录失败：${err.message}`))
-      }
-
-      currentMessages.push(...validResults.map(({ toolCall, toolName, result }) => ({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        name: toolName,
-        content: result
-      })))
-
-      if (validResults.every(r => r._terminal && typeof r.result === 'string' && !r.result.startsWith('error:'))) {
-        logger.info(`[工具调用] 本轮全部为终态工具(${validResults.map(r => r.toolName).join(',')})且执行成功，跳过最终文本回复`)
-        session.toolResults = allToolResults
-        return
-      }
-
-      const nextRequest = this.buildRequestData(currentMessages, session.tools, "auto")
-      const nextResponse = await this.retryRequest(nextRequest, session.toolContent, 1, session.toolName)
-      const nextMessage = nextResponse?.choices?.[0]?.message
-      if (!nextMessage) break
-
-      currentMessage = nextMessage
-      if (!currentMessage.tool_calls?.length && currentMessage.content) {
-        session.toolResults = allToolResults
-        await this.handleTextResponse(
-          currentMessage.content,
-          e,
-          session,
-          currentMessages,
-          session.toolName
-        )
-        return
-      }
-    }
-
-    if (round >= MAX_TOOL_ROUNDS) {
-      logger.warn(`[工具调用] 已达到最大轮数：${MAX_TOOL_ROUNDS}`)
-    }
-
-    session.toolResults = allToolResults
-    const finalRequest = this.buildRequestData(currentMessages, [], "none")
-    const finalResponse = await this.retryRequest(finalRequest, session.toolContent, 1, session.toolName)
-
-    if (finalResponse?.choices?.[0]?.message?.content) {
-      await this.handleTextResponse(
-        finalResponse.choices[0].message.content,
-        e,
-        session,
-        currentMessages,
-        session.toolName
-      )
-    }
-  }
-
-  async executeTool(tool, params, e) {
-    // 不做自动重试：戳一戳/禁言/送礼等工具有副作用，盲目重试可能重复执行；
-    // 失败信息会以 error 结果回传给模型，由模型决定后续动作。
-    if (typeof tool === "string" && mcpManager.isMCPTool(tool)) {
-      return await mcpManager.executeToolByAlias(tool, params)
-    }
-
-    if (tool && typeof tool.execute === "function") {
-      return await tool.execute(params, e)
-    }
-
-    return null
-  }
-
   async handleTextResponse(content, e, session, messages, toolName) {
     const output = await this.processToolSpecificMessage(content, toolName)
     if (!output) {
@@ -1262,124 +868,6 @@ export class ChatPlugin extends plugin {
     // 表达学习已移至 handleRandomReply 静默收集，不在此处调用
   }
 
-
-
-
-
-
-  /**
-   * 初始化MCP服务器连接
-   */
-  async initMCP() {
-    try {
-      const configDir = path.join(process.cwd(), "plugins/bl-chat-plugin/config")
-      const configDefaultDir = path.join(process.cwd(), "plugins/bl-chat-plugin/config_default")
-      const configPath = path.join(configDir, "mcp-servers.yaml")
-      const defaultConfigPath = path.join(configDefaultDir, "mcp-servers.yaml")
-
-      if (!fs.existsSync(configDir)) {
-        fs.mkdirSync(configDir, { recursive: true })
-      }
-
-      if (!fs.existsSync(configPath)) {
-        if (fs.existsSync(defaultConfigPath)) {
-          fs.copyFileSync(defaultConfigPath, configPath)
-          logger.info(`[MCP] 已从 config_default 复制配置文件: mcp-servers.yaml`)
-          logger.info(`[MCP] 请根据需要修改配置并启用相应的MCP服务器`)
-        } else {
-          logger.warn(`[MCP] 默认配置文件不存在: ${defaultConfigPath}`)
-          logger.warn(`[MCP] 请在 config_default 目录下创建 mcp-servers.yaml 文件`)
-          return
-        }
-      }
-
-      if (!fs.existsSync(configPath)) {
-        logger.info("[MCP] MCP配置文件不存在，跳过初始化")
-        return
-      }
-
-      let mcpConfig = YAML.parse(fs.readFileSync(configPath, "utf8"))
-      if (fs.existsSync(defaultConfigPath)) {
-        const defaultMcpConfig = YAML.parse(fs.readFileSync(defaultConfigPath, "utf8"))
-        const mergedMcpConfig = this.mergeMCPConfig(defaultMcpConfig, mcpConfig || {})
-        if (JSON.stringify(mcpConfig || {}) !== JSON.stringify(mergedMcpConfig)) {
-          fs.writeFileSync(configPath, YAML.stringify(mergedMcpConfig))
-          logger.info("[MCP] 已自动补齐 mcp-servers.yaml 新增默认配置项")
-        }
-        mcpConfig = mergedMcpConfig
-      }
-      mcpManager.configure(mcpConfig?.settings || {})
-
-      if (!mcpConfig?.servers) {
-        logger.info("[MCP] MCP配置为空或无服务器配置")
-        this.updateToolsList()
-        return
-      }
-
-      for (const [serverName, config] of Object.entries(mcpConfig.servers)) {
-        mcpManager.rememberServerConfig(serverName, config)
-      }
-
-      const enabledServers = Object.entries(mcpConfig.servers).filter(([_, config]) => config.enabled)
-
-      if (enabledServers.length === 0) {
-        logger.info("[MCP] 没有启用的MCP服务器")
-        this.updateToolsList()
-        return
-      }
-
-      for (const [serverName, config] of enabledServers) {
-        await mcpManager.connectServer(serverName, config)
-      }
-
-      this.updateToolsList()
-
-      logger.info(`[MCP] 初始化完成，共加载 ${mcpManager.aliases?.size || mcpManager.tools.size} 个MCP工具`)
-    } catch (error) {
-      logger.error("[MCP] 初始化失败:", error)
-    }
-  }
-
-  /**
-   * 更新工具列表（合并本地工具和MCP工具）
-   */
-  updateToolsList(options = {}) {
-    this.syncDedupeToolConfig(this.config.oneapi_tools || [])
-    const localTools = this.getToolsByName(this.config.oneapi_tools || [], {
-      warnMissing: this.localToolsReady !== false
-    })
-    const mcpTools = mcpManager.getAllTools() || []
-
-    this.tools = [...localTools, ...mcpTools]
-
-    for (const session of this.sessionMap.values()) {
-      session.tools = this.tools
-    }
-
-  }
-
-  async waitForMCPReady(timeoutMs = 5000) {
-    if (!mcpInitPromise) return
-    try {
-      await Promise.race([
-        mcpInitPromise,
-        delay(timeoutMs).then(() => "timeout")
-      ])
-      this.updateToolsList()
-    } catch (error) {
-      logger.warn(`[MCP] 等待初始化完成失败: ${error.message}`)
-    }
-  }
-
-  /**
-   * 重新发起 MCP 初始化并更新 waitForMCPReady 等待的同一个 promise。
-   * 供 apps/mcp.js 的 #mcp 重载命令通过 pluginBridge 调用。
-   */
-  reloadMCPConnections() {
-    mcpInitPromise = this.initMCP()
-    return mcpInitPromise
-  }
-
 }
 
 Object.assign(
@@ -1389,5 +877,8 @@ Object.assign(
   toolHistoryMethods,
   messageBuilderMethods,
   conversationTrackerMethods,
-  replySenderMethods
+  replySenderMethods,
+  toolExecutorMethods,
+  sessionHistoryMethods,
+  mcpLifecycleMethods
 )
