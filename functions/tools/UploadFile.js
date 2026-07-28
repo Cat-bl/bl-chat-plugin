@@ -1,7 +1,6 @@
 import axios from '../../node_modules/axios/index.js';
 import _ from 'lodash';
 import { dependencies } from "../../dependence/dependencies.js";
-import { refreshTencentImageUrl } from '../../utils/fileUtils.js';
 const { mimeTypes } = dependencies;
 
 /**
@@ -42,80 +41,6 @@ export async function takeSourceMsg(e, { img, file } = {}) {
     return false
   }
   return source
-}
-
-async function TakeImages(e) {
-  const getImageUrl = async (message) => {
-    async function isUrlAvailable(url) {
-      try {
-        const response = await axios.get(url);
-        const contentType = response.headers['content-type'];
-        return !contentType || !contentType.includes('application/json');
-      } catch (error) {
-        //console.error('请求出错:', error.message);
-        return false;
-      }
-    }
-
-    async function processUrl(url, fid) {
-      if (url.includes('rkey=') && !url.includes('fileid=') && !url.includes(fid)) {
-        const rkey = await getRKey(url);
-        const host = await extractDomain(url);
-        let appid = 1407;
-        let attempts = 0;
-        while (attempts < 5) {
-          const customUrl = `${host}/download?appid=${appid}&fileid=${fid}&spec=0&rkey=${rkey}`;
-          //console.log(customUrl)
-          if (await isUrlAvailable(customUrl)) {
-            return customUrl;
-          }
-          appid--;
-          attempts++;
-        }
-      }
-      return url;
-    }
-
-    for (const { type, url, fid } of message) {
-      if ((type === "image" || type === "file") && url) {
-        return await refreshTencentImageUrl(url, fid);
-      }
-    }
-    return null;
-  };
-
-  let imgurl = e.getReply ? await e.getReply() : null;
-  if (!imgurl && e.source) {
-    const chatHistory = e.group?.getChatHistory || e.friend?.getChatHistory;
-    if (chatHistory) {
-      const seq = e.group ? e.source.seq : e.source.time;
-      imgurl = (await chatHistory.call(e.group || e.friend, seq, 1)).pop();
-    }
-  }
-  imgurl = imgurl?.message ? await getImageUrl(imgurl.message) : null;
-  const img_urls = e.message ? await Promise.all(e.message.map(async (msg) => await getImageUrl([msg]))) : [];
-  imgurl = imgurl ? [imgurl] : img_urls.filter(Boolean);
-  return imgurl;
-}
-
-async function getRKey(url) {
-  const rkeyParam = 'rkey=';
-  const rkeyStartIndex = url.indexOf(rkeyParam);
-  if (rkeyStartIndex === -1) return null;
-  const actualStartIndex = rkeyStartIndex + rkeyParam.length;
-  const rkeyEndIndex = url.indexOf('&', actualStartIndex);
-  const rkey = rkeyEndIndex === -1
-    ? url.substring(actualStartIndex)
-    : url.substring(actualStartIndex, rkeyEndIndex);
-  return rkey;
-}
-
-async function extractDomain(url) {
-  const ampIndex = url.indexOf('&');
-  if (ampIndex !== -1) {
-    return url.slice(0, ampIndex);
-  }
-  return url;
 }
 
 export async function getBufferFile(fileUrl, filename) {

@@ -145,7 +145,7 @@ export class MessageRecordPlugin extends plugin {
             return false
         }
 
-        const [, action, type, valueStr] = matches
+        const [, , , valueStr] = matches
         const configKey = 'allowedGroups'
 
         const values = valueStr.split(/[,，]\s*/).filter(v => v.trim())

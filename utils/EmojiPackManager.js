@@ -46,7 +46,6 @@ let instance = null
 
 function logInfo(msg) { globalThis.logger?.info?.(`[EmojiPackManager] ${msg}`) }
 function logWarn(msg) { globalThis.logger?.warn?.(`[EmojiPackManager] ${msg}`) }
-function logError(msg) { globalThis.logger?.error?.(`[EmojiPackManager] ${msg}`) }
 
 function readPluginConfig() {
   const file = fs.existsSync(CONFIG_PATH) ? CONFIG_PATH : CONFIG_DEFAULT_PATH
@@ -474,7 +473,6 @@ export class EmojiPackManager {
     // 按 1/(usedCount+1) 加权抽样最多 20 张候选
     const sample = []
     const weighted = items.map((item, idx) => ({ idx, weight: 1 / ((item.usedCount || 0) + 1) }))
-    const total = weighted.reduce((a, b) => a + b.weight, 0)
     const candidatePool = [...weighted]
     const N = Math.min(20, candidatePool.length)
     for (let i = 0; i < N; i++) {

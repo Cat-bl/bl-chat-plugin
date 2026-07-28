@@ -1,5 +1,4 @@
 import { AbstractTool } from './AbstractTool.js';
-import ws from 'ws';
 // VoiceTool.js
 export class VoiceTool extends AbstractTool {
   constructor() {
@@ -22,8 +21,6 @@ export class VoiceTool extends AbstractTool {
 
   async func(opts, e) {
     const { text } = opts;
-
-    const groupId = e.group_id;
 
     // try {
     //   const resData = await Bot.sendApi('send_group_ai_record', {
@@ -79,86 +76,5 @@ export class VoiceTool extends AbstractTool {
     } catch (error) {
       return `发送语音失败: ${error.message}`;
     }
-
-
-    const hugg = () => {
-      return new Promise((resolve, reject) => {
-        let hash = Math.random().toString(36).substring(2, 12);
-        let ws_client = new ws('wss://songdaooi-taffy-bert-vits2.hf.space/queue/join?__theme=system');
-        let voice = 'https://songdaooi-taffy-bert-vits2.hf.space/--replicas/2iodv/file='
-        const data = {
-          "data": [
-            text,
-            "taffy",
-            0.2,
-            0.6,
-            0.8,
-            1
-          ],
-          "fn_index": 0,
-          "session_hash": Math.random().toString(36).substring(2, 13)
-        };
-
-        ws_client.on("open", () => {
-        });
-
-        ws_client.on("message", async event => {
-          event = JSON.parse(event);
-          switch (event.msg) {
-            case "send_hash":
-              ws_client.send(JSON.stringify({
-                session_hash: hash,
-                fn_index: 0,
-              }));
-              break;
-            case "estimation":
-              {
-                break;
-              };
-            case "send_data":
-              ws_client.send(JSON.stringify({
-                "data": data.data,
-                "fn_index": 0,
-                "session_hash": hash,
-              }));
-              break;
-            case "process_starts":
-              {
-                break;
-              }
-            case "process_completed":
-              ws_client.close();
-              if (event.output.data[0] == 'Success') {
-                // let file_url = event.output.data[1];
-                // const base64 = file_url.split(",")[1];
-                // await e.reply(segment.record(`data:audio/wav;base64,${base64}`));
-
-                await e.reply(segment.record(`${voice}${event.output.data[1].name}`));
-                resolve(`发送语音内容(${text})成功，你已经发送语音了，所以不需要强调你已经发送语音，继续说之后的事情`)
-
-              } else {
-                reject(`发送语音失败`)
-              }
-              break;
-            case "process_failed":
-              ws_client.close();
-              reject(`发送语音失败`)
-              break;
-          }
-        });
-
-        ws_client.on("error", error => {
-          ws_client.close();
-          reject(`发送语音失败`)
-        });
-
-        ws_client.on("close", () => {
-
-        });
-      })
-    }
-
-    const result = await hugg()
-    return result
   }
 }

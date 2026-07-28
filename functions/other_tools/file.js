@@ -1,7 +1,6 @@
 import { dependencies } from "../../dependence/dependencies.js";
 const { textract, require } = dependencies;
 const pdfParse = require('pdf-parse');
-const fs = require('fs').promises;
 
 async function extractTextFromBase64(mimeType, buffer) {
   try {

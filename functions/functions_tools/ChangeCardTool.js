@@ -55,7 +55,7 @@ export class ChangeCardTool extends AbstractTool {
   }
 
   async func(opts, e) {
-    const { target, senderRole, cardName } = opts;
+    const { target, cardName } = opts;
     if (!target) {
       return '无法获取到要修改的目标qq号';
     }

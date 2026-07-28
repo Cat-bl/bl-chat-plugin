@@ -16,7 +16,6 @@ export class QQApi {
 
   getGtk(data) {
     let ck = this.getck(data, this.Bot)
-    // eslint-disable-next-line no-var
     for (var e = ck.p_skey || "", n = 5381, r = 0, o = e.length; r < o; ++r) {
       n += (n << 5) + e.charAt(r).charCodeAt(0)
     }

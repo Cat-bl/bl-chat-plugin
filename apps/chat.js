@@ -412,7 +412,6 @@ export class ChatPlugin extends plugin {
   }
 
   buildRequestData(messages, tools, toolChoice = "auto") {
-    const provider = this.getProvider()
     const data = {
       model: this.getModel(),
       messages,
@@ -724,7 +723,7 @@ export class ChatPlugin extends plugin {
           const chatHistory = await this.messageManager.getMessages(e.message_type, e.message_type === "group" ? e.group_id : e.user_id)
 
           if (chatHistory?.length) {
-            const memberMap = await e.bot.pickGroup(groupId).getMemberMap()
+            await e.bot.pickGroup(groupId).getMemberMap()
 
             // 使用 message_id 过滤当前消息
             const currentMessageId = e.message_id
@@ -1353,7 +1352,7 @@ export class ChatPlugin extends plugin {
 
     this.tools = [...localTools, ...mcpTools]
 
-    for (const [sessionId, session] of this.sessionMap) {
+    for (const session of this.sessionMap.values()) {
       session.tools = this.tools
     }
 

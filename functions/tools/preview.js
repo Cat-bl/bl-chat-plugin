@@ -3,7 +3,6 @@ const require = createRequire(import.meta.url);
 const puppeteer = require('puppeteer');
 import fs from 'fs';
 import path from 'path';
-import util from 'util';
 import http from 'http';
 import https from 'https';
 
@@ -115,7 +114,6 @@ async function extractAndRender(text, options = {}) {
           // 生成模拟终端输出的 HTML 内容
           const terminalContent = generateTerminalContent(execResult.output, execResult.error);
           const outputPath = path.join(outputDir, `render_${index}.png`);
-          const metadata = { execution: execResult };
 
           // 渲染终端内容
           const renderResult = await renderHtmlContent(browser, terminalContent, {
@@ -290,9 +288,7 @@ async function renderFrontendCodeBlock(browser, block, options) {
   const { language, code } = block;
   const {
     outputPath,
-    timeout,
-    additionalScripts,
-    additionalStyles
+    timeout
   } = options;
 
   const page = await browser.newPage();

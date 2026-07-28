@@ -37,10 +37,6 @@ const UNSUPPORTED_SCHEMA_FIELDS = [
 const MODEL_SCHEMA_TYPES = new Set(["object", "string", "number", "integer", "boolean", "array"])
 const SAFE_SCHEMA_FIELDS = new Set(["type", "description", "properties", "required", "items", "enum"])
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
 function withTimeout(promise, timeoutMs, errorMessage) {
   if (!timeoutMs || timeoutMs <= 0) return promise
 
@@ -444,14 +440,14 @@ export class MCPClientManager {
 
     if (schema.$ref) {
       if (seen.has(schema.$ref)) {
-        const { $ref, ...rest } = schema
+        const { $ref: _ref, ...rest } = schema
         return this.dereferenceSchema(rest, root, seen)
       }
 
       const target = this.resolveRef(schema.$ref, root)
       if (target) {
         seen.add(schema.$ref)
-        const { $ref, ...rest } = schema
+        const { $ref: _ref, ...rest } = schema
         const merged = {
           ...this.dereferenceSchema(target, root, seen),
           ...this.dereferenceSchema(rest, root, seen)

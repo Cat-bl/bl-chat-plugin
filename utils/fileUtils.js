@@ -659,36 +659,6 @@ function isBufferImage(buffer) {
  */
 export async function TakeImages(e) {
   const getImageUrl = async (message) => {
-    async function isUrlAvailable(url) {
-      try {
-        const response = await axios.get(url);
-        const contentType = response.headers['content-type'];
-        return !contentType || !contentType.includes('application/json');
-      } catch (error) {
-        //console.error('请求出错:', error.message);
-        return false;
-      }
-    }
-
-    async function processUrl(url, fid) {
-      if (url.includes('rkey=') && !url.includes('fileid=') && !url.includes(fid)) {
-        const rkey = await getRKey(url);
-        const host = await extractDomain(url);
-        let appid = 1407;
-        let attempts = 0;
-        while (attempts < 5) {
-          const customUrl = `${host}/download?appid=${appid}&fileid=${fid}&rkey=${rkey}`;
-          //console.log(customUrl)
-          if (await isUrlAvailable(customUrl)) {
-            return customUrl;
-          }
-          appid--;
-          attempts++;
-        }
-      }
-      return url;
-    }
-
     for (const { type, url, fid } of message) {
       if ((type === "image" || type === "file") && url) {
         return await refreshTencentImageUrl(url, fid);
@@ -924,11 +894,6 @@ async function getReplyMsg(e) {
     console.error("获取引用消息失败:", error);
     return null;
   }
-}
-
-async function extractFileExtension(filename) {
-  const match = filename.match(/\.([a-zA-Z0-9]+)$/);
-  return match ? match[1] : null;
 }
 
 /**
