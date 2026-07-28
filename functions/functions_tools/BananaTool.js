@@ -2,6 +2,11 @@ import { AbstractTool } from './AbstractTool.js';
 import { getBase64Image, normalizeImageUrls } from '../../utils/fileUtils.js';
 import { dependencies } from "../../dependence/dependencies.js";
 import { callAI } from "../../utils/apiClient.js";
+import {
+  resolveImageEndpoint,
+  callImageGenApi,
+  extractImageUrl,
+} from '../../utils/api/imageGeneration.js';
 import fs from "fs";
 import YAML from "yaml";
 import path from "path";
@@ -41,34 +46,41 @@ export class BananaTool extends AbstractTool {
 
     // 处理图片
     const images = await normalizeImageUrls(this.normalizeArray(rawImages));
-    const imgurls = await this.buildImageMessages(prompt, images);
+    const { imageEditApiUrl: apiUrl, imageEditApiKey: apiKey, imageEditApiModel: model } =
+      config.imageEditAiConfig || {};
+    const finalUrl = apiUrl || 'https://api.openai.com/v1/chat/completions';
+    const finalModel = model || "gemini-3-pro-image-preview";
+    const finalKey = apiKey || 'sk-xxxxxx';
+
+    const endpoint = resolveImageEndpoint(finalUrl, images.length > 0);
+    let processedUrl;
 
     try {
-      const { imageEditApiUrl: apiUrl, imageEditApiKey: apiKey, imageEditApiModel: model } =
-        config.imageEditAiConfig || {};
+      if (endpoint.type === 'chat') {
+        // chat/completions 模式：多模态 messages 走 callAI（保持原行为）
+        const imgurls = await this.buildImageMessages(prompt, images);
+        const result = await callAI(
+          { url: finalUrl, model: finalModel, apikey: finalKey },
+          [{ role: "user", content: imgurls }],
+          { stream: false }
+        );
 
-      const result = await callAI(
-        {
-          url: apiUrl || 'https://api.openai.com/v1/chat/completions',
-          model: model || "gemini-3-pro-image-preview",
-          apikey: apiKey || 'sk-xxxxxx'
-        },
-        [{ role: "user", content: imgurls }],
-        { stream: false }
-      )
+        if (result.error) {
+          return { error: `图片生成失败: ${result.error}` };
+        }
 
-      if (result.error) {
-        return { error: `图片生成失败: ${result.error}` }
+        // 兼容两种响应格式：
+        // 1. images 数组（部分模型如 Gemini 把图片放在 message.images 里）
+        // 2. content 字符串（Markdown 图片或 base64 data URI）
+        const msg = result?.choices?.[0]?.message || {}
+        const imageUrl = msg.images?.[0]?.image_url?.url ||
+          msg.images?.[0]?.url ||
+          msg.content || ''
+        processedUrl = extractImageUrl(imageUrl);
+      } else {
+        // responses / images(edits|generations) 模式
+        processedUrl = await callImageGenApi(endpoint, prompt, images, finalModel, finalKey);
       }
-
-      // 兼容两种响应格式：
-      // 1. images 数组（部分模型如 Gemini 把图片放在 message.images 里）
-      // 2. content 字符串（Markdown 图片或 base64 data URI）
-      const msg = result?.choices?.[0]?.message || {}
-      const imageUrl = msg.images?.[0]?.image_url?.url ||
-        msg.images?.[0]?.url ||
-        msg.content || ''
-      const processedUrl = this.extractImageUrl(imageUrl);
 
       if (processedUrl) {
         await e.reply([segment.image(processedUrl)]);
@@ -112,42 +124,6 @@ export class BananaTool extends AbstractTool {
       );
     }
     return messages;
-  }
-
-  // 从模型返回的文本/URL 中提取图片地址（支持 Markdown 图片格式、base64 data URI、http 链接）
-  extractImageUrl(content) {
-    if (!content) return null;
-
-    // 匹配 Markdown 图片格式: ![xxx](url)
-    const mdMatch = content.match(/!\[.*?\]\((data:image\/[^;]+;base64,[^)]+|https?:\/\/[^)]+)\)/);
-    if (mdMatch) {
-      const url = mdMatch[1];
-      if (url.startsWith('data:image')) {
-        const base64Data = url.replace(/^data:image\/[^;]+;base64,/, '');
-        return `base64://${base64Data}`;
-      }
-      return url;
-    }
-
-    // 匹配纯 base64 data URI
-    const base64Match = content.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
-    if (base64Match) {
-      return `base64://${base64Match[1]}`;
-    }
-
-    // 匹配带扩展名的 http/https 链接
-    const httpsMatch = content.match(/https?:\/\/[^\s)'"<>]+\.(png|jpg|jpeg|gif|webp|bmp)[^\s)'"<>]*/i);
-    if (httpsMatch) {
-      return httpsMatch[0];
-    }
-
-    // 匹配通用 http/https 链接
-    const httpMatch = content.match(/https?:\/\/[^\s)'"<>]+/);
-    if (httpMatch) {
-      return httpMatch[0];
-    }
-
-    return null;
   }
 
   /**

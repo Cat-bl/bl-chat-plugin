@@ -246,7 +246,7 @@ export class CustomWeatherTool extends AbstractTool {
 ```
 
 **注意事项**：
-- bananaTool工具仅支持文生图，googleImageEditTool工具可以图生图。两个工具都兼容/completions格式的生图模型，工具名是历史遗留问题不再修改。
+- bananaTool工具仅支持文生图，googleImageEditTool工具可以图生图。两个工具都兼容三种生图 API 格式（`/v1/chat/completions` 多模态、`/v1/responses` Responses API、`/v1` Images API 自动按有图/无图走 `/images/edits` 或 `/images/generations`），工具名是历史遗留问题不再修改。
 - 推荐继承 `../functions/functions_tools/AbstractTool.js`，和内置工具使用同一套写法。
 - 自定义工具名不能和内置工具重复，重复时会拒绝加载自定义版本并保留内置工具。
 - 工具文件写错或执行报错只会记录日志/返回 `error`，不会影响其它工具和正常聊天。
@@ -919,10 +919,26 @@ chatApiKey: "sk-ant-xxxxx"
 
 ### 图像编辑模型配置 (`imageEditAiConfig`)
 
-**OpenAI 兼容格式**：
+`bananaTool`（文生图）和 `googleImageEditTool`（图生图）共用此配置，按 URL 后缀自动识别三种 API 格式：
+
+**1. Chat Completions 格式**（多模态 messages，默认）：
 ```yaml
 imageEditApiUrl: "https://api.openai.com/v1/chat/completions"
 imageEditApiModel: "gemini-3-pro-image-preview"
+imageEditApiKey: "sk-xxxxx"
+```
+
+**2. Responses API 格式**（`/v1/responses`，走 `image_generation` 工具）：
+```yaml
+imageEditApiUrl: "https://api.openai.com/v1/responses"
+imageEditApiModel: "gpt-image-1"
+imageEditApiKey: "sk-xxxxx"
+```
+
+**3. Images API 格式**（`/v1`，有图自动走 `/images/edits` multipart，无图自动走 `/images/generations` JSON）：
+```yaml
+imageEditApiUrl: "https://api.openai.com/v1"
+imageEditApiModel: "gpt-image-1"
 imageEditApiKey: "sk-xxxxx"
 ```
 
@@ -933,7 +949,7 @@ imageEditApiModel: "claude-3-5-sonnet-20241022"
 imageEditApiKey: "sk-ant-xxxxx"
 ```
 
-> **说明**：用于图片编辑和文生图功能。插件会根据 URL 自动识别 API 格式，自动处理多模态消息转换（OpenAI `image_url` ↔ Anthropic `image` 格式）。
+> **说明**：用于图片编辑和文生图功能。Chat Completions 模式下插件会自动识别 OpenAI / Anthropic 格式并处理多模态消息转换（`image_url` ↔ `image`）。Responses 与 Images 模式按 OpenAI 官方规范调用，`bananaTool` 无图时 Images 模式自动走 `/images/generations` 文生图。
 
 ### 图像识别模型配置 (`analysisAiConfig`)
 
