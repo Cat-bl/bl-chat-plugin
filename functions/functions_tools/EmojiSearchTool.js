@@ -170,11 +170,6 @@ export class EmojiSearchTool extends AbstractTool {
         }
       }
 
-      // 添加延迟函数，避免频繁请求
-      function delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-      }
-
       // 打乱数组
       const shuffled = imageUrls.sort(() => 0.5 - Math.random());
 
@@ -221,7 +216,6 @@ export class EmojiSearchTool extends AbstractTool {
       }
 
       const BATCH_SIZE = 8;  // 正常批次大小
-      const RETRY_BATCH_SIZE = 5;  // 风控后的批次大小
       let successCount = 0;
       let failedBatches = 0;
 

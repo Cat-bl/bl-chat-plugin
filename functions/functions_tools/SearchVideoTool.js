@@ -1,7 +1,5 @@
 import { AbstractTool } from './AbstractTool.js';
 import { sendvideos } from '../tools/sendvideos.js';
-import { BilibiliVideoSummary } from '../tools/BilibiliVideoSummary.js';
-import common from '../../../../lib/common/common.js';
 import fetch from 'node-fetch';
 
 /**
@@ -129,11 +127,6 @@ export class SearchVideoTool extends AbstractTool {
     let { keyword } = opts;
     try {
       const result = await this.searchBilibili(keyword);
-
-      function extractBVID(str) {
-        const match = str.match(/BV号：(BV[A-Za-z0-9]+)/);
-        return match ? match[1] : null;
-      }
 
       // 如果结果中包含封面链接，先发送格式化的文本信息（不包含封面链接）
       if (result.includes('🖼️ 封面：')) {

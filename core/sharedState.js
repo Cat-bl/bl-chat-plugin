@@ -50,7 +50,20 @@ export function buildMemoryConfig(config) {
 
 export function initializeSharedState(config) {
   if (sharedState) {
-    // 热更新：直接覆盖各 Manager 的 config，无需 Manager 侧改动
+    // 热更新：直接覆盖各 Manager 的 config，无需 Manager 侧改动。
+    //
+    // 【热更覆盖范围】此分支只需要处理"自己持有 config 副本的子系统"；
+    // 对话主流程的绝大多数配置项（触发词/并发/分段发送/prompt 等）每条消息都从
+    // this.config 现读，initConfig 重载后自然生效，无需在此登记。
+    // - messageManager：groupMaxMessages / groupChatMemoryDays
+    // - emotionManager：decayRate / eventWeights
+    // - memoryManager：memorySystem 全量 + memoryAiConfig / embeddingAiConfig（updateConfig）
+    // - expressionLearner：expressionLearning 全量 + memoryAiConfig
+    // - knowledgeSearcher：启用/停用/embedding 参数/topN/threshold
+    // - 本地工具注册表：force reload
+    // 【不在此处、但有各自热更途径】emojiPackManager 每次选图前自行 refreshConfig；
+    // qqMusicToken 由定时任务每 10 分钟重读；MCP 服务变更走 #mcp 重载（mcp-servers.yaml 不热更）。
+    // 新增"子系统持有副本"型字段时必须同步扩展本分支，否则热更不生效（见 CLAUDE.md 工作约定）。
     sharedState.messageManager.groupMaxMessages = config.groupMaxMessages || 100
     sharedState.messageManager.cacheExpireDays = config.groupChatMemoryDays
     Object.assign(sharedState.emotionManager.config, {

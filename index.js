@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "path";
-import config from "./model/config.js";
+import "./model/config.js";
 if (!global.segment) {
     global.segment = (await import("oicq")).segment
 }

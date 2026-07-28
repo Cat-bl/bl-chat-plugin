@@ -66,10 +66,6 @@ const BUILT_IN_TOOL_FACTORIES = [
   () => new SendGiftTool(),
 ]
 
-function logInfo(message) {
-  globalThis.logger?.info?.(`[LocalToolRegistry] ${message}`)
-}
-
 function logWarn(message) {
   globalThis.logger?.warn?.(`[LocalToolRegistry] ${message}`)
 }

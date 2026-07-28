@@ -2,6 +2,11 @@ import { AbstractTool } from './AbstractTool.js';
 import { getBase64Image, normalizeImageUrls } from '../../utils/fileUtils.js';
 import { dependencies } from "../../dependence/dependencies.js";
 import { callAI } from "../../utils/apiClient.js";
+import {
+    resolveImageEndpoint,
+    callImageGenApi,
+    extractImageUrl,
+} from '../../utils/api/imageGeneration.js';
 import fs from "fs";
 import YAML from "yaml";
 import path from "path";
@@ -35,6 +40,10 @@ export class GoogleImageEditTool extends AbstractTool {
         try {
             const config = this.loadConfig();
             const { prompt } = opts;
+            const { imageEditApiUrl, imageEditApiKey, imageEditApiModel } = config.imageEditAiConfig || {};
+            const apiUrl = imageEditApiUrl || 'https://api.openai.com/v1/chat/completions';
+            const apiModel = imageEditApiModel || "gemini-3-pro-image-preview";
+            const apiKey = imageEditApiKey || 'sk-xxxxxx';
 
             // 处理图片URL
             const images = await normalizeImageUrls(this.normalizeArray(opts.images));
@@ -43,35 +52,35 @@ export class GoogleImageEditTool extends AbstractTool {
                 return { error: '未检测到有效的图片链接' };
             }
 
-            // 构建消息内容
-            const content = await this.buildImageMessages(prompt, images);
+            const endpoint = resolveImageEndpoint(apiUrl, true);
+            let processedUrl;
 
-            // 调用API
-            const { imageEditApiUrl, imageEditApiKey, imageEditApiModel } = config.imageEditAiConfig || {};
+            if (endpoint.type === 'chat') {
+                // chat/completions 模式：多模态 messages 走 callAI（保持原行为）
+                const content = await this.buildImageMessages(prompt, images);
+                const result = await callAI(
+                    { url: apiUrl, model: apiModel, apikey: apiKey },
+                    [{ role: "user", content }],
+                    { stream: false }
+                );
 
-            const result = await callAI(
-                {
-                    url: imageEditApiUrl || 'https://api.openai.com/v1/chat/completions',
-                    model: imageEditApiModel || "gemini-3-pro-image-preview",
-                    apikey: imageEditApiKey || 'sk-xxxxxx'
-                },
-                [{ role: "user", content }],
-                { stream: false }
-            )
+                if (result.error) {
+                    return { error: `图片编辑失败: ${result.error}` };
+                }
 
-            if (result.error) {
-                return { error: `图片编辑失败: ${result.error}` }
+                // 兼容两种响应格式：
+                // 1. images 数组（部分模型如 Gemini 把图片放在 message.images 里）
+                // 2. content 字符串（Markdown 图片或 base64 data URI）
+                const msg = result?.choices?.[0]?.message || {}
+                const imageUrl = msg.images?.[0]?.image_url?.url ||
+                    msg.images?.[0]?.url ||
+                    msg.content || ''
+
+                processedUrl = extractImageUrl(imageUrl);
+            } else {
+                // responses / images(edits) 模式
+                processedUrl = await callImageGenApi(endpoint, prompt, images, apiModel, apiKey);
             }
-
-            // 兼容两种响应格式：
-            // 1. images 数组（部分模型如 Gemini 把图片放在 message.images 里）
-            // 2. content 字符串（Markdown 图片或 base64 data URI）
-            const msg = result?.choices?.[0]?.message || {}
-            const imageUrl = msg.images?.[0]?.image_url?.url ||
-                msg.images?.[0]?.url ||
-                msg.content || ''
-
-            const processedUrl = this.extractImageUrl(imageUrl);
 
             if (processedUrl) {
                 await e.reply([segment.image(processedUrl)]);
@@ -119,42 +128,6 @@ export class GoogleImageEditTool extends AbstractTool {
             );
         }
         return messages;
-    }
-
-    // 从模型返回的文本/URL 中提取图片地址（支持 Markdown 图片格式、base64 data URI、http 链接）
-    extractImageUrl(content) {
-        if (!content) return null;
-
-        // 匹配 Markdown 图片格式: ![xxx](url)
-        const mdMatch = content.match(/!\[.*?\]\((data:image\/[^;]+;base64,[^)]+|https?:\/\/[^)]+)\)/);
-        if (mdMatch) {
-            const url = mdMatch[1];
-            if (url.startsWith('data:image')) {
-                const base64Data = url.replace(/^data:image\/[^;]+;base64,/, '');
-                return `base64://${base64Data}`;
-            }
-            return url;
-        }
-
-        // 匹配纯 base64 data URI
-        const base64Match = content.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
-        if (base64Match) {
-            return `base64://${base64Match[1]}`;
-        }
-
-        // 匹配带扩展名的 http/https 链接
-        const httpsMatch = content.match(/https?:\/\/[^\s)'"<>]+\.(png|jpg|jpeg|gif|webp|bmp)[^\s)'"<>]*/i);
-        if (httpsMatch) {
-            return httpsMatch[0];
-        }
-
-        // 匹配通用 http/https 链接
-        const httpMatch = content.match(/https?:\/\/[^\s)'"<>]+/);
-        if (httpMatch) {
-            return httpMatch[0];
-        }
-
-        return null;
     }
 
     // ========== 图片URL处理 ==========

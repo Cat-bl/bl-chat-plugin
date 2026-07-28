@@ -1,7 +1,4 @@
 import { AbstractTool } from "./AbstractTool.js"
-import { getBase64Image } from "../../utils/fileUtils.js"
-import { dependencies } from "../../dependence/dependencies.js"
-const { mimeTypes } = dependencies
 
 /**
  * 视频处理工具类，用于处理用户的视频相关请求
