@@ -174,6 +174,28 @@ export class MessageManager {
   }
 
   /**
+   * 语音转文字（NapCat 扩展接口 fetch_ptt_text，QQ 官方转文字能力）
+   * @param {Object} source 含 bot 与 message_id 的对象（消息事件即可）
+   * @param {number} [timeoutMs=8000] 超时毫秒数
+   * @returns {Promise<string>} 转出的文本，失败/超时返回空串
+   */
+  async fetchPttText(source, timeoutMs = 8000) {
+    const bot = source?.bot || (typeof Bot !== 'undefined' ? Bot : null);
+    if (!bot?.sendApi || !source?.message_id) return '';
+    try {
+      const res = await Promise.race([
+        bot.sendApi('fetch_ptt_text', { message_id: source.message_id }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('转文字超时')), timeoutMs))
+      ]);
+      const data = res?.data ?? res;
+      return String(data?.text || '').trim();
+    } catch (error) {
+      logger.debug?.(`[MessageManager] 语音转文字失败: ${error.message}`);
+      return '';
+    }
+  }
+
+  /**
  * 格式化消息内容
  * 图片/文件的链接长度不计入总长度
  * @param {Object} message 消息对象
@@ -214,9 +236,17 @@ export class MessageManager {
           case 'video':
             action = '发送了一个视频';
             break;
-          case 'record':
-            action = '发送了一条语音';
+          case 'record': {
+            // 语音附带转文字内容、文件名和直链：文件名（xxx.amr）可经 NapCat get_record
+            // 换取音频，直链是 amr 格式且 rkey 有时效
+            const pttText = await this.fetchPttText(message);
+            action = pttText ? `发送了一条语音，语音内容: ${pttText}` : '发送了一条语音';
+            const recordParts = [];
+            if (msg.file) recordParts.push(`语音文件: ${msg.file}`);
+            if (msg.url) recordParts.push(`语音链接: ${msg.url}`);
+            urlPart = recordParts.length ? ` [${recordParts.join(' ')}]` : '';
             break;
+          }
           case 'share':
             action = `分享了链接: ${msg.title || msg.url}`;
             break;
