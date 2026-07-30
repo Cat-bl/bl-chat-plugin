@@ -189,11 +189,20 @@ export const messageBuilderMethods = {
             .filter(Boolean)
           const hasQuotedVideo = quotedVideos.length > 0
 
+          // 语音附带转文字内容与文件名（xxx.amr）：文件名可经 NapCat get_record 换取音频，
+          // 直链是 amr 格式且 rkey 有时效
           const quotedRecords = reply.message?.filter(m => m.type === "record") || []
           const recordUrls = quotedRecords
-            .map(r => r?.url || r?.file_url || r?.data?.url || r?.data?.file_url || r?.file || r?.data?.file)
+            .map(r => r?.url || r?.file_url || r?.data?.url || r?.data?.file_url)
+            .filter(Boolean)
+          const recordFiles = quotedRecords
+            .map(r => r?.file || r?.data?.file)
             .filter(Boolean)
           const hasQuotedRecord = quotedRecords.length > 0
+          let quotedPttText = ""
+          if (hasQuotedRecord) {
+            quotedPttText = await this.messageManager?.fetchPttText?.({ bot: e?.bot, message_id: reply.message_id }) || ""
+          }
 
           const quotedFiles = reply.message?.filter(m => m.type === "file") || []
           const fileNames = quotedFiles
@@ -229,8 +238,12 @@ export const messageBuilderMethods = {
               parts.push(`一段视频${urlText}`)
             }
             if (hasQuotedRecord) {
-              const urlText = recordUrls.length ? `(链接: ${recordUrls.join(", ")})` : ""
-              parts.push(`一段语音${urlText}`)
+              const recordInfo = [
+                quotedPttText ? `语音内容: ${quotedPttText}` : "",
+                recordFiles.length ? `语音文件: ${recordFiles.join(", ")}` : "",
+                recordUrls.length ? `链接: ${recordUrls.join(", ")}` : ""
+              ].filter(Boolean).join("，")
+              parts.push(`一段语音${recordInfo ? `(${recordInfo})` : ""}`)
             }
             if (hasQuotedFile) {
               const fileText = fileNames.length ? `(文件名: ${fileNames.join(", ")})` : ""
