@@ -75,7 +75,7 @@ export class SearchVideoTool extends AbstractTool {
   constructor() {
     super();
     this.name = 'searchVideoTool';
-    this.description = '搜索视频并返回详细信息，当用户想要查找视频、了解视频内容时使用。';
+    this.description = '搜索视频并返回详细信息，当用户想要查找视频、了解视频内容时使用，或当前对话场景需要查找视频时你可以主动调用此工具。';
     this.keywords = ['搜视频', '找视频', 'B站搜索', '视频搜索', '查找视频'];
     this.intent = '用户想要搜索或查找B站视频相关内容时的意图';
     this.examples = [
@@ -217,23 +217,22 @@ export class SearchVideoTool extends AbstractTool {
 
       // 如果结果中包含封面链接，先发送格式化的文本信息（不包含封面链接）
       if (result.includes('🖼️ 封面：')) {
-        // 分离文本信息和封面链接
-        const [textInfo, coverInfo] = result.split('🖼️ 封面：');
-
+        // 分离文本信息和封面链接（详情停发后暂不使用，恢复发送时一并取消注释）
+        // const [textInfo, coverInfo] = result.split('🖼️ 封面：');
         // 清理封面链接（个别条目无封面，空链接就只发文本）
-        const coverUrl = coverInfo.trim();
+        // const coverUrl = coverInfo.trim();
 
-        // 封面+详情打包成合并转发，避免长内容刷屏；失败回退普通消息。
-        // common 依赖 Yunzai 运行环境，动态 import 使加载失败也能走回退
-        const detailMsg = coverUrl ? [segment.image(coverUrl), textInfo.trim()] : textInfo.trim();
-        try {
-          const { default: common } = await import('../../../../lib/common/common.js');
-          const forwardMsg = await common.makeForwardMsg(e, [detailMsg], 'B站视频搜索结果');
-          await e.reply(forwardMsg);
-        } catch (error) {
-          console.error('合并转发发送失败，回退普通消息:', error.message);
-          await e.reply(detailMsg);
-        }
+        // 封面+详情消息已停发（内容太长刷屏），只发视频本体；详情文本仍返回给模型。
+        // 需要恢复时取消下面注释（合并转发形式，失败回退普通消息）：
+        // const detailMsg = coverUrl ? [segment.image(coverUrl), textInfo.trim()] : textInfo.trim();
+        // try {
+        //   const { default: common } = await import('../../../../lib/common/common.js');
+        //   const forwardMsg = await common.makeForwardMsg(e, [detailMsg], 'B站视频搜索结果');
+        //   await e.reply(forwardMsg);
+        // } catch (error) {
+        //   console.error('合并转发发送失败，回退普通消息:', error.message);
+        //   await e.reply(detailMsg);
+        // }
         // 发送视频链接
         await sendvideos(result, e);
         return { result: result };
