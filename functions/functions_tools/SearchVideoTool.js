@@ -30,6 +30,15 @@ const mixinKeyEncTab = [
 const getMixinKey = orig => mixinKeyEncTab.map(n => orig[n]).join('').slice(0, 32);
 const md5 = s => crypto.createHash('md5').update(s).digest('hex');
 
+// B 站标题里带 HTML 实体（&quot; 等）与 <em> 高亮标签，先去标签再解实体
+const cleanTitle = s => String(s || '')
+  .replace(/<[^>]+>/g, '')
+  .replace(/&quot;/g, '"')
+  .replace(/&#39;/g, "'")
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>')
+  .replace(/&amp;/g, '&');
+
 // buvid 与 wbi key 缓存：wbi key 每日轮换，正常情况按 TTL 复用，风控报错时强制刷新
 let biliAuthCache = null; // { cookie, imgKey, subKey, at }
 const BILI_AUTH_TTL_MS = 60 * 60 * 1000;
@@ -171,7 +180,7 @@ export class SearchVideoTool extends AbstractTool {
         const pic = String(randomVideo.pic || '');
         return `🎬 随机推荐视频：
 
-📺 ${String(randomVideo.title || '').replace(/<[^>]+>/g, '')}
+📺 ${cleanTitle(randomVideo.title)}
 👤 UP主：${randomVideo.author || '未知UP主'}
 🔢 BV号：${randomVideo.bvid}
 🎯 分区：${randomVideo.typename || '未知分区'}
@@ -214,12 +223,17 @@ export class SearchVideoTool extends AbstractTool {
         // 清理封面链接（个别条目无封面，空链接就只发文本）
         const coverUrl = coverInfo.trim();
 
-        //const sessdata = '';
-
-        //const VideoSummary = await common.makeForwardMsg(e, [await BilibiliVideoSummary(sessdata, extractBVID(result))], 'Ai总结+弹幕');
-        //await e.reply(VideoSummary);
-        // 发送图片和文本信息
-        await e.reply(coverUrl ? [segment.image(coverUrl), textInfo.trim()] : textInfo.trim());
+        // 封面+详情打包成合并转发，避免长内容刷屏；失败回退普通消息。
+        // common 依赖 Yunzai 运行环境，动态 import 使加载失败也能走回退
+        const detailMsg = coverUrl ? [segment.image(coverUrl), textInfo.trim()] : textInfo.trim();
+        try {
+          const { default: common } = await import('../../../../lib/common/common.js');
+          const forwardMsg = await common.makeForwardMsg(e, [detailMsg], 'B站视频搜索结果');
+          await e.reply(forwardMsg);
+        } catch (error) {
+          console.error('合并转发发送失败，回退普通消息:', error.message);
+          await e.reply(detailMsg);
+        }
         // 发送视频链接
         await sendvideos(result, e);
         return { result: result };
