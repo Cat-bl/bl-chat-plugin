@@ -92,11 +92,14 @@ export class SendLocalEmojiTool extends AbstractTool {
         const maxMs = Math.max(minMs, Number(cfg.followUpDelayMaxMs) || 800)
         await sleep(Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs)
       }
+      // 动画表情标记两家协议端字段名不同：NapCat 认 sub_type，LLBot(LuckyLilliaBot) 认 subType，
+      // 同时携带（各端忽略不认识的字段），否则会按普通图片发送
       await e.reply({
         type: "image",
         data: {
           file: `file://${absPath}`,
           sub_type: 1,
+          subType: 1,
           summary: "[动画表情]"
         }
       })
