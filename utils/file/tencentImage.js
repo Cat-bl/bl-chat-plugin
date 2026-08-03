@@ -1,4 +1,4 @@
-// 腾讯图片直链处理：rkey 解析/刷新、链接可用性探测、Napcat rkey 获取。
+// 腾讯图片直链处理：rkey 解析/刷新、链接可用性探测、Napcat/LLBot rkey 获取。
 // 从 fileUtils.js 拆出（行为等价搬迁）。
 import axios from "axios";
 import _ from "lodash";
@@ -64,17 +64,31 @@ async function callOneBotApi(action, params = {}) {
   throw new Error('找不到 OneBot API 调用接口');
 }
 
+// 记住上次成功的 rkey action，避免换协议端后每次都先打一发不存在的接口；
+// 缓存仅决定尝试顺序，缓存项失败仍会回退另一个（协议端可能运行中更换）
+let preferredRKeyAction = null;
+
 export async function getNapcatRKeys() {
-  try {
-    const response = await callOneBotApi('nc_get_rkey');
-    const items = Array.isArray(response?.data) ? response.data : [];
-    return items
-      .map(item => normalizeRKeyValue(item?.rkey || item?.value || item))
-      .filter(Boolean);
-  } catch (error) {
-    globalThis.logger?.debug?.(`[fileUtils] nc_get_rkey 获取失败: ${error.message}`);
-    return [];
+  // NapCat 的 nc_get_rkey 返回数组 [{rkey: "&rkey=xxx"}...]；
+  // LLBot(LuckyLilliaBot) 的 get_rkey 返回对象 { private_key, group_key }
+  const actions = [...new Set([preferredRKeyAction, 'nc_get_rkey', 'get_rkey'])].filter(Boolean);
+  for (const action of actions) {
+    try {
+      const response = await callOneBotApi(action);
+      const data = response?.data ?? response;
+      const values = Array.isArray(data)
+        ? data.map(item => item?.rkey || item?.value || item)
+        : [data?.private_key, data?.group_key];
+      const rkeys = values.map(normalizeRKeyValue).filter(Boolean);
+      if (rkeys.length) {
+        preferredRKeyAction = action;
+        return rkeys;
+      }
+    } catch (error) {
+      globalThis.logger?.debug?.(`[fileUtils] ${action} 获取失败: ${error.message}`);
+    }
   }
+  return [];
 }
 
 export async function isTencentImageUrlAvailable(url) {

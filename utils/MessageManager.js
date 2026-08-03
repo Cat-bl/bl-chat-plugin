@@ -174,7 +174,7 @@ export class MessageManager {
   }
 
   /**
-   * 语音转文字（NapCat 扩展接口 fetch_ptt_text，QQ 官方转文字能力）
+   * 语音转文字（QQ 官方转文字能力；NapCat 名 fetch_ptt_text，LLBot 名 voice_msg_to_text）
    * @param {Object} source 含 bot 与 message_id 的对象（消息事件即可）
    * @param {number} [timeoutMs=8000] 超时毫秒数
    * @returns {Promise<string>} 转出的文本，失败/超时返回空串
@@ -182,9 +182,26 @@ export class MessageManager {
   async fetchPttText(source, timeoutMs = 8000) {
     const bot = source?.bot || (typeof Bot !== 'undefined' ? Bot : null);
     if (!bot?.sendApi || !source?.message_id) return '';
+    // 两家协议端 action 名不同、参数响应一致（{message_id} -> data.text）；
+    // 成功一次后记住可用名，避免每条语音都先打一发不存在的接口。
+    // 缓存仅决定尝试顺序，缓存项失败仍会回退另一个（协议端可能运行中更换）
+    const attempt = async () => {
+      const actions = [...new Set([this.pttTextAction, 'fetch_ptt_text', 'voice_msg_to_text'])].filter(Boolean);
+      let lastError = null;
+      for (const action of actions) {
+        try {
+          const res = await bot.sendApi(action, { message_id: source.message_id });
+          this.pttTextAction = action;
+          return res;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError || new Error('语音转文字接口不可用');
+    };
     try {
       const res = await Promise.race([
-        bot.sendApi('fetch_ptt_text', { message_id: source.message_id }),
+        attempt(),
         new Promise((_, reject) => setTimeout(() => reject(new Error('转文字超时')), timeoutMs))
       ]);
       const data = res?.data ?? res;

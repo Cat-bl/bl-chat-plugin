@@ -5,7 +5,8 @@ import {
   parseRKeyFromUrl,
   isImageBuffer,
   getRKey,
-  extractDomain
+  extractDomain,
+  getNapcatRKeys
 } from "../utils/file/tencentImage.js"
 import { chunk, removeDuplicates } from "../utils/file/collection.js"
 
@@ -42,6 +43,34 @@ test("getRKey：从链接中截取 rkey 参数", async () => {
 test("extractDomain：截取第一个 & 之前的部分", async () => {
   assert.equal(await extractDomain("https://host/download?appid=1&fileid=2"), "https://host/download?appid=1")
   assert.equal(await extractDomain("https://host/plain"), "https://host/plain")
+})
+
+test("getNapcatRKeys：兼容 NapCat 数组与 LLBot 对象两种响应，缓存项失败时回退", async () => {
+  try {
+    // NapCat：nc_get_rkey 返回数组（值带 &rkey= 前缀）
+    globalThis.Bot = {
+      sendApi: async action => {
+        if (action === "nc_get_rkey") return { data: [{ rkey: "&rkey=P1" }, { rkey: "&rkey=G1" }] }
+        throw new Error("不支持的 action")
+      }
+    }
+    assert.deepEqual(await getNapcatRKeys(), ["P1", "G1"])
+
+    // 换成 LLBot：缓存的 nc_get_rkey 失败后应回退 get_rkey（对象格式）
+    globalThis.Bot = {
+      sendApi: async action => {
+        if (action === "get_rkey") return { data: { private_key: "P2", group_key: "G2", expired_time: 1 } }
+        throw new Error("不支持的 action")
+      }
+    }
+    assert.deepEqual(await getNapcatRKeys(), ["P2", "G2"])
+
+    // 两个接口都失败：返回空数组
+    globalThis.Bot = { sendApi: async () => { throw new Error("接口不可用") } }
+    assert.deepEqual(await getNapcatRKeys(), [])
+  } finally {
+    delete globalThis.Bot
+  }
 })
 
 test("chunk：size 为 1 时逐项分块", () => {

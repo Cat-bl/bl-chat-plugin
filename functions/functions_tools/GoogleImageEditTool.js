@@ -155,15 +155,21 @@ export class GoogleImageEditTool extends AbstractTool {
         const rkeyMatch = url.match(/rkey=([^&]+)/);
         if (!rkeyMatch) return null;
 
-        try {
-            const response = await this.callApi('nc_get_rkey');
-            if (response?.status === 'ok' && response?.data?.length >= 2) {
-                // 取数组中第二个元素的rkey，去掉开头的"&rkey="
-                const rkeyValue = response.data[1].rkey;
-                return rkeyValue.replace(/^&rkey=/, '');
+        // NapCat 的 nc_get_rkey 返回数组（data[1] 为群聊 rkey，带 &rkey= 前缀）；
+        // LLBot(LuckyLilliaBot) 的 get_rkey 返回 { private_key, group_key }。
+        // 记住可用名（工具实例为注册器单例）；缓存仅决定尝试顺序，失败仍回退
+        for (const action of [...new Set([this.rkeyAction, 'nc_get_rkey', 'get_rkey'])].filter(Boolean)) {
+            try {
+                const response = await this.callApi(action);
+                const data = response?.data ?? response;
+                const value = Array.isArray(data) ? data[1]?.rkey : data?.group_key;
+                if (value) {
+                    this.rkeyAction = action;
+                    return String(value).replace(/^&?rkey=/, '');
+                }
+            } catch (error) {
+                console.error(`获取rkey失败(${action}):`, error);
             }
-        } catch (error) {
-            console.error('获取rkey失败:', error);
         }
 
         // 如果接口调用失败，返回原始rkey

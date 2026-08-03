@@ -83,7 +83,15 @@ export const configManagerMethods = {
 
       if (fs.existsSync(configPath)) {
         const config = YAML.parse(fs.readFileSync(configPath, "utf8"))
-        const merged = this.mergeConfig(defaultConfig, config)
+        let merged = this.mergeConfig(defaultConfig, config)
+        try {
+          // 数组增量同步：靠快照区分"默认新增"（追加）与"用户删除"（不回加）。
+          // 无快照（存量用户首次升级/快照损坏）时只建基线不追加，行为与旧版完全一致
+          const snapshot = this.readDefaultsSnapshot(configDir)
+          if (snapshot) merged = this.applyDefaultArrayAdditions(merged, defaultConfig, snapshot)
+        } catch (err) {
+          logger.error(`[配置] 默认数组增量同步失败（已跳过，不影响加载）: ${err}`)
+        }
 
         if (JSON.stringify(config) !== JSON.stringify(merged)) {
           fs.writeFileSync(configPath, YAML.stringify(merged))
@@ -103,6 +111,9 @@ export const configManagerMethods = {
         userMtimeMs: fs.statSync(configPath).mtimeMs,
         defaultMtimeMs: fs.statSync(defaultConfigPath).mtimeMs
       }
+
+      // 记录"本次运行看到的默认配置"，作为下次识别默认新增数组条目的基线
+      this.writeDefaultsSnapshot(configDir, defaultConfig)
     } catch (err) {
       logger.error(`[配置] 加载配置文件失败: ${err}`)
       this.config = {}
@@ -155,6 +166,71 @@ export const configManagerMethods = {
     }
 
     return true
+  }
+,
+  /**
+   * 读取默认配置快照（上次运行看到的 config_default 内容）。
+   * 不存在/损坏时返回 null，调用方视为无基线：只建快照、不做数组增量。
+   */
+  readDefaultsSnapshot(configDir) {
+    try {
+      const snapshotPath = path.join(configDir, ".defaults-snapshot.yaml")
+      if (!fs.existsSync(snapshotPath)) return null
+      const parsed = YAML.parse(fs.readFileSync(snapshotPath, "utf8"))
+      return parsed && typeof parsed === "object" ? parsed : null
+    } catch {
+      return null
+    }
+  }
+,
+  writeDefaultsSnapshot(configDir, defaultConfig) {
+    try {
+      const snapshotPath = path.join(configDir, ".defaults-snapshot.yaml")
+      const content =
+        "# 插件内部文件：记录上次运行时的默认配置，用于识别 config_default 新增的数组条目，请勿手动修改\n" +
+        YAML.stringify(defaultConfig)
+      // 内容没变就不重复写盘
+      if (fs.existsSync(snapshotPath) && fs.readFileSync(snapshotPath, "utf8") === content) return
+      fs.writeFileSync(snapshotPath, content)
+    } catch (err) {
+      globalThis.logger?.warn?.(`[配置] 写入默认配置快照失败: ${err}`)
+    }
+  }
+,
+  /**
+   * 把默认配置里"新出现"的字符串数组条目追加进合并结果（典型场景：oneapi_tools 新增工具）。
+   * 新增 = 在新默认里且不在快照里；用户删除 = 在快照里且不在用户配置里，永不回加。
+   * 只处理纯字符串数组（集合语义）；对象数组（如 talkValueRules）保持用户值不动。
+   * 比对时剥掉尾部 "(标记)"（如 dedupe），避免默认条目改标记后被当作新条目重复追加。
+   */
+  applyDefaultArrayAdditions(merged, defaults, snapshot) {
+    const stripMark = value => String(value).trim().replace(/\s*\([^)]*\)\s*$/, "")
+    const walk = (mergedNode, defaultsNode, snapshotNode, parentPath) => {
+      if (!mergedNode || !defaultsNode || typeof defaultsNode !== "object" || Array.isArray(defaultsNode)) return
+      for (const key of Object.keys(defaultsNode)) {
+        const defaultValue = defaultsNode[key]
+        const keyPath = parentPath ? `${parentPath}.${key}` : key
+        if (Array.isArray(defaultValue)) {
+          const snapshotValue = snapshotNode?.[key]
+          const userValue = mergedNode[key]
+          if (!Array.isArray(snapshotValue) || !Array.isArray(userValue)) continue
+          if (!defaultValue.every(item => typeof item === "string")) continue
+          const snapshotKeys = new Set(snapshotValue.filter(item => typeof item === "string").map(stripMark))
+          const userKeys = new Set(userValue.filter(item => typeof item === "string").map(stripMark))
+          const additions = defaultValue.filter(
+            item => !snapshotKeys.has(stripMark(item)) && !userKeys.has(stripMark(item))
+          )
+          if (additions.length) {
+            mergedNode[key] = [...userValue, ...additions]
+            globalThis.logger?.info?.(`[配置] 默认配置新增条目已同步到 ${keyPath}: ${additions.join(", ")}`)
+          }
+        } else if (defaultValue && typeof defaultValue === "object") {
+          walk(mergedNode[key], defaultValue, snapshotNode?.[key], keyPath)
+        }
+      }
+    }
+    walk(merged, defaults, snapshot, "")
+    return merged
   }
 ,
   mergeConfig(defaults, user) {

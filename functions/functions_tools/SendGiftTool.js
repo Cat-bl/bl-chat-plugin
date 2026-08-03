@@ -161,10 +161,19 @@ export class SendGiftTool extends AbstractTool {
       const encoded = this.encodePB(packet)
       const hex = this.bytesToHex(encoded)
 
-      const result = await e.bot.sendApi('send_packet', {
-        cmd: 'MessageSvc.PbSendMsg',
-        data: hex
-      })
+      // NapCat 扩展名 send_packet({cmd, data})；LLBot(LuckyLilliaBot) 名 send_pb({cmd, hex})
+      let result
+      try {
+        result = await e.bot.sendApi('send_packet', {
+          cmd: 'MessageSvc.PbSendMsg',
+          data: hex
+        })
+      } catch {
+        result = await e.bot.sendApi('send_pb', {
+          cmd: 'MessageSvc.PbSendMsg',
+          hex
+        })
+      }
 
       if (result) {
         return `成功向 ${targetNickname}(${targetQQ}) 发送 ${giftConfig.name}（${giftConfig.coinValue}金币）`

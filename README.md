@@ -1,7 +1,7 @@
 # 自用插件留存
 ### 修改自[y-tian-plugin](https://gitee.com/wan13877501248/y-tian-plugin)，移除了多余功能，重构全局对话实现代码，新增MCP工具功能，新增部分本地工具，新增支持自定义本地工具等功能
 
-# 只兼容Trss yunzai + Napcat，其他框架请勿使用
+# 兼容Trss yunzai + OneBot v11协议，其他框架请勿使用
 
 ### 本插件实际表现出来的能力取决于配置的模型。
 
