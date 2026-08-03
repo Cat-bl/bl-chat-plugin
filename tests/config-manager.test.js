@@ -1,5 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import fs from "fs"
+import os from "os"
+import path from "path"
 import { configManagerMethods } from "../core/configManager.js"
 
 // mergeConfig 内部用 this 递归，绑定到方法集合对象上调用
@@ -62,4 +65,76 @@ test("mergeMCPConfig：用户 servers 整体保留，默认中存在的同名 se
   // legacyAliasEnabled 是已废弃字段，合并时强制移除
   assert.equal("legacyAliasEnabled" in merged.settings, false)
   assert.equal(merged.settings.timeout, 30)
+})
+
+test("applyDefaultArrayAdditions：默认新增条目追加，用户删除的条目不回加", () => {
+  const snapshot = { pluginSettings: { oneapi_tools: ["aTool", "bTool", "cTool"] } }
+  const defaults = { pluginSettings: { oneapi_tools: ["aTool", "bTool", "cTool", "newTool"] } }
+  // 用户删掉了 bTool（表示禁用），merged 的数组即用户值
+  const merged = { pluginSettings: { oneapi_tools: ["aTool", "cTool"] } }
+  cm.applyDefaultArrayAdditions(merged, defaults, snapshot)
+  assert.deepEqual(merged.pluginSettings.oneapi_tools, ["aTool", "cTool", "newTool"])
+})
+
+test("applyDefaultArrayAdditions：条目仅 (标记) 变化不视为新增，不产生重复", () => {
+  const snapshot = { list: ["bananaTool", "xTool"] }
+  const defaults = { list: ["bananaTool(dedupe)", "xTool"] }
+  const merged = { list: ["bananaTool", "xTool"] }
+  cm.applyDefaultArrayAdditions(merged, defaults, snapshot)
+  assert.deepEqual(merged.list, ["bananaTool", "xTool"])
+})
+
+test("applyDefaultArrayAdditions：对象数组与快照缺失字段都不做增量", () => {
+  const snapshot = { rules: [{ v: 1 }] }
+  const defaults = { rules: [{ v: 1 }, { v: 2 }], fresh: ["a", "b"] }
+  const merged = { rules: [{ v: 1 }], fresh: ["a"] }
+  cm.applyDefaultArrayAdditions(merged, defaults, snapshot)
+  assert.deepEqual(merged.rules, [{ v: 1 }])
+  // fresh 在快照里不存在（无基线）：不追加，交给 mergeConfig 的整字段补全逻辑
+  assert.deepEqual(merged.fresh, ["a"])
+})
+
+test("默认配置快照：写入读回与损坏降级", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bl-chat-snapshot-"))
+  try {
+    assert.equal(cm.readDefaultsSnapshot(dir), null)
+    const defaults = { pluginSettings: { oneapi_tools: ["aTool"] } }
+    cm.writeDefaultsSnapshot(dir, defaults)
+    assert.deepEqual(cm.readDefaultsSnapshot(dir), defaults)
+    // 内容被破坏成非对象时降级为无快照
+    fs.writeFileSync(path.join(dir, ".defaults-snapshot.yaml"), "只是一个字符串")
+    assert.equal(cm.readDefaultsSnapshot(dir), null)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("快照三方合并多轮启动：升级建基线 → 默认新增同步 → 用户删除不回加", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bl-chat-flow-"))
+  try {
+    // 存量用户：早已删掉 bTool
+    let defaults = { pluginSettings: { oneapi_tools: ["aTool", "bTool"] } }
+    const userTools = () => ({ pluginSettings: { oneapi_tools: ["aTool"] } })
+
+    // 第一轮（升级后首启）：无快照，只建基线，配置与旧版行为完全一致
+    let snapshot = cm.readDefaultsSnapshot(dir)
+    let merged = cm.mergeConfig(defaults, userTools())
+    if (snapshot) merged = cm.applyDefaultArrayAdditions(merged, defaults, snapshot)
+    cm.writeDefaultsSnapshot(dir, defaults)
+    assert.deepEqual(merged.pluginSettings.oneapi_tools, ["aTool"])
+
+    // 第二轮（插件更新默认新增 newTool）：只有 newTool 被追加，bTool 仍不回加
+    defaults = { pluginSettings: { oneapi_tools: ["aTool", "bTool", "newTool"] } }
+    snapshot = cm.readDefaultsSnapshot(dir)
+    merged = cm.applyDefaultArrayAdditions(cm.mergeConfig(defaults, userTools()), defaults, snapshot)
+    cm.writeDefaultsSnapshot(dir, defaults)
+    assert.deepEqual(merged.pluginSettings.oneapi_tools, ["aTool", "newTool"])
+
+    // 第三轮（用户又删掉了 newTool，默认未变）：不回加
+    snapshot = cm.readDefaultsSnapshot(dir)
+    merged = cm.applyDefaultArrayAdditions(cm.mergeConfig(defaults, userTools()), defaults, snapshot)
+    assert.deepEqual(merged.pluginSettings.oneapi_tools, ["aTool"])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
