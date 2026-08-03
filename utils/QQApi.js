@@ -80,7 +80,9 @@ export class QQApi {
         "domain": "qzone.qq.com",
       })
       // logger.info(KEY_DATA.data.cookies, 666)
-      return KEY_DATA.data
+      // NapCat 返回 token 字段，LLBot 等 OneBot 11 标准实现返回 csrf_token 字段，两者取值算法相同
+      const data = KEY_DATA.data
+      return { ...data, token: data.token ?? data.csrf_token }
 
     } catch (error) {
 
