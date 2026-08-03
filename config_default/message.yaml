@@ -354,6 +354,7 @@ pluginSettings:
     - googleImageAnalysisTool
     - aiMindMapTool
     - bananaTool(dedupe)
+    - bilibiliTool
     - bingImageSearchTool
     - changeCardTool
     - chatHistoryTool

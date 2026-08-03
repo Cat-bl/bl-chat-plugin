@@ -1,72 +1,6 @@
 import { AbstractTool } from './AbstractTool.js';
 import { sendvideos } from '../tools/sendvideos.js';
-import fetch from 'node-fetch';
-import crypto from 'node:crypto';
-
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
-// node-fetch 默认无超时，B 站接口挂起会吊死整个工具调用
-const FETCH_TIMEOUT_MS = 15000;
-async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } catch (err) {
-    throw err?.name === 'AbortError' ? new Error(`B站接口请求超时（${timeoutMs}ms）`) : err;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// B 站 web 接口 WBI 签名（无签名/无有效 buvid 会被风控网关拦截返回 HTML 页）
-// 算法来自 bilibili-API-collect 社区文档
-const mixinKeyEncTab = [
-  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
-  33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
-  61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
-  36, 20, 34, 44, 52
-];
-const getMixinKey = orig => mixinKeyEncTab.map(n => orig[n]).join('').slice(0, 32);
-const md5 = s => crypto.createHash('md5').update(s).digest('hex');
-
-// B 站标题里带 HTML 实体（&quot; 等）与 <em> 高亮标签，先去标签再解实体
-const cleanTitle = s => String(s || '')
-  .replace(/<[^>]+>/g, '')
-  .replace(/&quot;/g, '"')
-  .replace(/&#39;/g, "'")
-  .replace(/&lt;/g, '<')
-  .replace(/&gt;/g, '>')
-  .replace(/&amp;/g, '&');
-
-// buvid 与 wbi key 缓存：wbi key 每日轮换，正常情况按 TTL 复用，风控报错时强制刷新
-let biliAuthCache = null; // { cookie, imgKey, subKey, at }
-const BILI_AUTH_TTL_MS = 60 * 60 * 1000;
-
-async function getBiliAuth(force = false) {
-  if (!force && biliAuthCache && Date.now() - biliAuthCache.at < BILI_AUTH_TTL_MS) {
-    return biliAuthCache;
-  }
-  const headers = { 'user-agent': UA, referer: 'https://www.bilibili.com/' };
-  const spi = await (await fetchWithTimeout('https://api.bilibili.com/x/frontend/finger/spi', { headers })).json();
-  if (!spi?.data?.b_3) throw new Error('获取 buvid 失败');
-  const cookie = `buvid3=${spi.data.b_3}; buvid4=${spi.data.b_4 || ''}`;
-  const nav = await (await fetchWithTimeout('https://api.bilibili.com/x/web-interface/nav', { headers: { ...headers, cookie } })).json();
-  const imgUrl = nav?.data?.wbi_img?.img_url || '';
-  const subUrl = nav?.data?.wbi_img?.sub_url || '';
-  if (!imgUrl || !subUrl) throw new Error('获取 wbi 签名密钥失败');
-  const keyOf = u => u.slice(u.lastIndexOf('/') + 1, u.lastIndexOf('.'));
-  biliAuthCache = { cookie, imgKey: keyOf(imgUrl), subKey: keyOf(subUrl), at: Date.now() };
-  return biliAuthCache;
-}
-
-function signWbi(params, imgKey, subKey) {
-  const withWts = { ...params, wts: Math.round(Date.now() / 1000) };
-  const query = Object.keys(withWts).sort()
-    .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(String(withWts[k]).replace(/[!'()*]/g, ''))}`)
-    .join('&');
-  return `${query}&w_rid=${md5(query + getMixinKey(imgKey + subKey))}`;
-}
+import { biliGetJson, cleanTitle } from '../tools/biliApi.js';
 
 /**
  * SearchVideo 工具类，用于搜索 Bilibili 视频
@@ -104,41 +38,16 @@ export class SearchVideoTool extends AbstractTool {
   }
 
   /**
-   * 带 WBI 签名请求搜索接口；风控（HTML 响应 / -403 / -412）时刷新凭证重试一次
+   * 带 WBI 签名请求搜索接口（风控重试在 biliApi.biliGetJson 内处理）
    * @param {string} name - 搜索关键词
    * @param {string} [order] - 排序方式（totalrank/pubdate/click/dm/stow）
-   * @param {boolean} retried - 是否已重试
    * @returns {Promise<Object>} - 接口 JSON（code=0）
    */
-  async requestSearch(name, order = '', retried = false) {
-    const auth = await getBiliAuth(retried);
+  async requestSearch(name, order = '') {
     const params = { keyword: name, search_type: 'video', page: 1 };
     // 参数校验层不查 enum，非法排序值这里静默忽略（按综合排序处理）
     if (['pubdate', 'click', 'dm', 'stow'].includes(order)) params.order = order;
-    const query = signWbi(params, auth.imgKey, auth.subKey);
-    const response = await fetchWithTimeout(`https://api.bilibili.com/x/web-interface/search/type?${query}`, {
-      headers: {
-        accept: 'application/json, text/javascript, */*; q=0.01',
-        'user-agent': UA,
-        referer: 'https://www.bilibili.com/',
-        cookie: auth.cookie
-      }
-    });
-    const text = await response.text();
-    let json;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      if (!retried) return this.requestSearch(name, order, true);
-      throw new Error(`B站返回了非 JSON 内容（疑似风控），HTTP ${response.status}`);
-    }
-    if (json.code !== 0) {
-      if (!retried && (json.code === -403 || json.code === -412)) {
-        return this.requestSearch(name, order, true);
-      }
-      throw new Error(`B站接口错误 code=${json.code} ${json.message || ''}`);
-    }
-    return json;
+    return await biliGetJson('https://api.bilibili.com/x/web-interface/search/type', params, { signed: true });
   }
 
   /**
