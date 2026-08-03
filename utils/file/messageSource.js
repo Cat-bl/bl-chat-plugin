@@ -161,11 +161,18 @@ async function getReplyMsg(e) {
         count: 1,
       });
     } else {
-      // 私聊消息历史
-      historyResponse = await e.bot.sendApi("get_private_msg_history", {
-        user_id: e.user_id,
-        count: 1,
-      });
+      // 私聊消息历史（NapCat 名 get_private_msg_history，LLBot 名 get_friend_msg_history，参数响应一致）
+      try {
+        historyResponse = await e.bot.sendApi("get_private_msg_history", {
+          user_id: e.user_id,
+          count: 1,
+        });
+      } catch {
+        historyResponse = await e.bot.sendApi("get_friend_msg_history", {
+          user_id: e.user_id,
+          count: 1,
+        });
+      }
     }
 
     if (!historyResponse?.data?.messages || historyResponse.data.messages.length === 0) {
