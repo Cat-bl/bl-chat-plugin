@@ -239,8 +239,10 @@ export class MessageManager {
           }
           case 'file': {
             const url = await this.getFileUrl(message, isGroup ? 'group' : 'private');
-            const fileSize = msg.size ? `(${(msg.size / 1024 / 1024).toFixed(2)}MB)` : '';
-            action = `发送了文件: ${msg.name || '未知文件'}${fileSize}`;
+            // OneBot 文件段没有 name/size 字段：NapCat/LLBot 均为 file（文件名）与 file_size（字符串）
+            const sizeBytes = Number(msg.size ?? msg.file_size) || 0;
+            const fileSize = sizeBytes ? `(${(sizeBytes / 1024 / 1024).toFixed(2)}MB)` : '';
+            action = `发送了文件: ${msg.name || msg.file || '未知文件'}${fileSize}`;
             urlPart = url ? ` [${url}]` : '';
             break;
           }

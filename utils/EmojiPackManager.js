@@ -541,14 +541,15 @@ export class EmojiPackManager {
 
     for (const seg of imageSegs) {
       try {
-        // L0 本地快速过滤：利用 QQ 协议原生字段，零成本筛掉普通图片
-        // 真正的 QQ 表情/贴图 sub_type=1，普通图片 sub_type=0
-        if (seg.sub_type !== 1) {
+        // L0 本地快速过滤：利用 QQ 协议原生字段，零成本筛掉普通图片。
+        // 真正的 QQ 表情/贴图 subType=1，普通图片 subType=0；
+        // NapCat 事件字段名为 sub_type，LLBot(LuckyLilliaBot) 为 subType，双读兼容
+        if ((seg.sub_type ?? seg.subType) !== 1) {
           continue
         }
-        // summary 是 QQ 客户端对表情的本地描述，如 "[动画表情]" "[自定义表情]"
-        // 普通图片 summary 为空字符串
-        if (!seg.summary || seg.summary === "") {
+        // summary 是 QQ 客户端对表情的本地描述，如 "[动画表情]" "[自定义表情]"，
+        // 普通图片为空字符串。LLBot 事件不带此字段，因此仅在字段存在时校验
+        if (typeof seg.summary === "string" && seg.summary === "") {
           continue
         }
 
