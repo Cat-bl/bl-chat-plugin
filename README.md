@@ -143,6 +143,7 @@ pnpm install
 - reminderTool      # 定时提醒工具
 - textImageTool     # 文字转图片发送工具(支持代码/MarkDown格式渲染)
 - sendGiftTool      # 送礼物工具（支持香槟、风暴战锤等多种礼物类型）
+- bilibiliTool      # Bilibili 功能相关工具(热门视频榜、热搜词榜、查主播开播状态、查UP主信息、今日番剧更新时间表)
 ```
 
 **可选工具**（默认不在 oneapi_tools 列表中，需要手动添加）：
