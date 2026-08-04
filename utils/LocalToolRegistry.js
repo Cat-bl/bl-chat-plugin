@@ -30,6 +30,7 @@ import { SendLocalEmojiTool } from "../functions/functions_tools/SendLocalEmojiT
 import { WaitTool } from "../functions/functions_tools/WaitTool.js"
 import { SendGiftTool } from "../functions/functions_tools/SendGiftTool.js"
 import { BilibiliTool } from "../functions/functions_tools/BilibiliTool.js"
+import { FakeChatTool } from "../functions/functions_tools/FakeChatTool.js"
 
 const PLUGIN_NAME = "bl-chat-plugin"
 const CUSTOM_TOOL_EXTENSIONS = new Set([".js", ".mjs", ".cjs"])
@@ -66,6 +67,7 @@ const BUILT_IN_TOOL_FACTORIES = [
   () => new WaitTool(),
   () => new SendGiftTool(),
   () => new BilibiliTool(),
+  () => new FakeChatTool(),
 ]
 
 function logWarn(message) {
