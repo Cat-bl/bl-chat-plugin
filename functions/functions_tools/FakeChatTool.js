@@ -83,6 +83,10 @@ export class FakeChatTool extends AbstractTool {
                   '需要插入图片/文件/视频时用占位写法：pic[图片直链]、file[文件直链]、video[视频直链]，',
                   '可与文字混排，例如 "你看这个 pic[https://xxx.jpg] 好看吗"'
                 ].join('')
+              },
+              time: {
+                type: 'integer',
+                description: '消息的发送时间（可选，Unix秒级时间戳）。可以自定义任意历史时间，比如伪造2005年的聊天记录。不填则自动使用当前时间附近的时间戳'
               }
             },
             required: ['qq', 'content']
@@ -244,7 +248,7 @@ export class FakeChatTool extends AbstractTool {
       if (!content) {
         return `error: 第 ${index + 1} 条消息的 content 不能为空`;
       }
-      parsed.push({ qq, name: item.name, content });
+      parsed.push({ qq, name: item.name, content, time: item.time });
     }
 
     // 主人保护：非主人发起时，不允许伪造主人的消息，也不能自定义显示昵称。
@@ -271,19 +275,36 @@ export class FakeChatTool extends AbstractTool {
 
       // 同一QQ只查一次昵称
       const nicknameCache = new Map();
-      const nodes = await Promise.all(parsed.map(async item => {
+      const nodes = await Promise.all(parsed.map(async (item, index) => {
         const key = `${item.qq}|${String(item.name ?? '').trim()}`;
         if (!nicknameCache.has(key)) {
           nicknameCache.set(key, this.resolveNickname(bot, e, item.qq, item.name));
         }
         const nickname = await nicknameCache.get(key);
+        const qqNum = Number(item.qq);
+
+        // 构造 node，兼容 NapCat 和 LLOneBot
+        const nodeData = {
+          user_id: qqNum,    // NapCat 标准字段
+          nickname,          // NapCat 标准字段
+          uin: qqNum,        // LLOneBot 标准字段
+          name: nickname,    // LLOneBot 标准字段
+          content: this.parseContent(item.content)
+        };
+
+        // time: 控制卡片里显示的消息时间
+        // 如果 LLM 传了 time 就用它的，否则按当前时间倒序排列（模拟历史消息从旧到新）
+        if (item.time && typeof item.time === 'number' && item.time > 0) {
+          nodeData.time = item.time;
+        } else {
+          nodeData.time = Math.floor(Date.now() / 1000) - (parsed.length - index - 1);
+        }
+
+        // 注意：id 字段会导致协议端报 1200 错误，暂不添加
+
         return {
           type: 'node',
-          data: {
-            user_id: Number(item.qq),
-            nickname,
-            content: this.parseContent(item.content)
-          }
+          data: nodeData
         };
       }));
 
