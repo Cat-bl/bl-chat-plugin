@@ -375,5 +375,6 @@ pluginSettings:
     - textImageTool
     - waitTool                            # 拟人化"稍后再说一句"；仅 chatTriggerMode=smart 且 smartTrigger.waitToolEnabled=true 时才会暴露给 LLM
     - sendGiftTool
+    - fakeChatTool                        # 伪造聊天记录（合并转发卡片），非主人无法伪造主人的消息
   githubToken: ""
   qqMusicToken: ""
