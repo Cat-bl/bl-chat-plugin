@@ -23,7 +23,7 @@ export class QQinfo extends plugin {
             return msg.type == "at"
         })[0]
         let mid = atMsg?.qq || e.msg.replace(/#| |查询qq/g, "")
-        if (mid == "") {
+        if (mid == "" || !/^\d+$/.test(mid)) {
             return e.reply("请输入qq号或者直接艾特再发送命令", true)
         }
         // 获取用户
@@ -39,7 +39,6 @@ export class QQinfo extends plugin {
         const skey = skeyRegex?.[1] // 输出 @sFOi60Ji4
         const p_skey = pSkeyRegex?.[1] // 输出 RLsR0kc5JtYiGuHxndsBYRQh3ugVWBVvdMstgQXrEdc_
         const url = `http://jiuli.xiaoapi.cn/i/qq/qq_level.php?qq=${mid}&return=json&uin=${uinRegex}&skey=${skey}&pskey=${p_skey}`
-        logger.info(url)
         const DATA_JSON = await fetch(url).then(res => res.json())
 
         DATA_JSON.cardTitle = '信息查询成功！！！'
