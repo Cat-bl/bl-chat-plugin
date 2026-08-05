@@ -11,6 +11,24 @@ const MEDIA_RE = /(?:pic|file|video)\[([^\]]+)\]/g;
 const TYPE_MAP = { p: 'image', f: 'file', v: 'video' };
 const MAX_NODES = 30;
 
+function toForwardMessageStyle(msgStyle) {
+  if (!msgStyle || typeof msgStyle !== 'object') return null;
+
+  const result = {
+    bubble_id: Number(msgStyle.bubbleId ?? 0),
+    pendant_id: Number(msgStyle.pendantId ?? 0),
+    font_id: Number(msgStyle.fontId ?? 0),
+    font_effect_id: Number(msgStyle.fontEffectId ?? 0),
+    is_cs_font_effect_enabled: msgStyle.isCsFontEffectEnabled ?? false,
+    bubble_diy_text_id: Number(msgStyle.bubbleDiyTextId ?? 0)
+  };
+  for (const key of ['bubble_id', 'pendant_id', 'font_id', 'font_effect_id', 'bubble_diy_text_id']) {
+    if (!Number.isSafeInteger(result[key]) || result[key] < 0) return null;
+  }
+  if (typeof result.is_cs_font_effect_enabled !== 'boolean') return null;
+  return result;
+}
+
 let masterCache = null;
 
 /**
@@ -58,6 +76,7 @@ export class FakeChatTool extends AbstractTool {
       '伪造/编造一段QQ聊天记录，以合并转发（聊天记录卡片）的形式发送到当前会话。',
       '适合场景：用户要求"伪造聊天记录"、"编一段对话"、玩梗整活、模拟某人说话，你也可以主动调用来整蛊某人。',
       '每条消息都可以指定任意QQ号和昵称，卡片内会显示对应的头像与名字。',
+      '若聊天记录中有被伪造QQ的[消息ID:xxx]，将每个QQ最新的一条ID放入message_ids以自动复用真实气泡；没有则省略，禁止编造。',
       '注意：这是纯娱乐功能，不要用来伪造涉及金钱、诈骗、造谣的内容。'
     ].join('\n');
     this.parameters = {
@@ -92,6 +111,11 @@ export class FakeChatTool extends AbstractTool {
             required: ['qq', 'content']
           },
           description: `聊天记录的消息列表，按先后顺序排列，最多 ${MAX_NODES} 条`
+        },
+        message_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '被伪造QQ的最近真实消息ID列表，可从聊天历史记录中的[消息ID:xxx]获取；每个QQ最多一条，没有则省略，禁止编造'
         },
         title: {
           type: 'string',
@@ -212,6 +236,37 @@ export class FakeChatTool extends AbstractTool {
     });
   }
 
+  isLLOneBot(bot) {
+    return bot?.version?.app_name === 'LLOneBot';
+  }
+
+  async resolveAutomaticStyles(bot, targetQQs, styleMessageIds) {
+    const result = new Map();
+    const styleTimes = new Map();
+    if (!this.isLLOneBot(bot)) return result;
+
+    for (const messageId of styleMessageIds) {
+      try {
+        const response = await bot.sendApi('get_msg', { message_id: messageId });
+        const message = response?.data;
+        const qq = message?.user_id === undefined ? '' : String(message.user_id);
+        if (!targetQQs.has(qq)) continue;
+        const style = toForwardMessageStyle(message?.raw?.msgStyle);
+        if (!style) continue;
+
+        const messageTime = Number(message?.time ?? message?.raw?.msgTime ?? 0) || 0;
+        const previousTime = styleTimes.get(qq);
+        if (previousTime === undefined || (messageTime > 0 && messageTime > previousTime)) {
+          result.set(qq, style);
+          styleTimes.set(qq, messageTime);
+        }
+      } catch {
+        // 气泡属于可选增强能力，查询失败时保持普通合并转发。
+      }
+    }
+    return result;
+  }
+
   /**
    * 先归一化 messages 再走基类校验。
    * 基类对 array 类型的校验会直接拦掉"单个对象"和"元素是JSON字符串"两种
@@ -220,6 +275,10 @@ export class FakeChatTool extends AbstractTool {
   validateParameters(params) {
     if (params && typeof params === 'object' && params.messages !== undefined) {
       params.messages = this.normalizeMessages(params.messages);
+    }
+    if (params && typeof params === 'object' && params.message_ids !== undefined) {
+      const list = Array.isArray(params.message_ids) ? params.message_ids : [params.message_ids];
+      params.message_ids = list.map(value => String(value).trim());
     }
     return super.validateParameters(params);
   }
@@ -248,6 +307,7 @@ export class FakeChatTool extends AbstractTool {
       if (!content) {
         return `error: 第 ${index + 1} 条消息的 content 不能为空`;
       }
+
       parsed.push({ qq, name: item.name, content, time: item.time });
     }
 
@@ -272,6 +332,25 @@ export class FakeChatTool extends AbstractTool {
 
     try {
       const bot = this.getBot(e);
+      let automaticStyles = new Map();
+      if (this.isLLOneBot(bot)) {
+        const targetQQs = new Set(parsed.map(item => item.qq));
+        const styleMessageIds = new Set();
+        if (targetQQs.has(callerQQ) && e?.message_id !== undefined) {
+          styleMessageIds.add(String(e.message_id));
+        }
+        const rawMessageIds = opts.message_ids === undefined
+          ? []
+          : (Array.isArray(opts.message_ids) ? opts.message_ids : [opts.message_ids]);
+        for (const [index, value] of rawMessageIds.entries()) {
+          const messageId = String(value).trim();
+          if (!/^-?\d+$/.test(messageId)) {
+            return `error: 第 ${index + 1} 个 message_ids 格式错误`;
+          }
+          styleMessageIds.add(messageId);
+        }
+        automaticStyles = await this.resolveAutomaticStyles(bot, targetQQs, styleMessageIds);
+      }
 
       // 同一QQ只查一次昵称
       const nicknameCache = new Map();
@@ -299,6 +378,9 @@ export class FakeChatTool extends AbstractTool {
         } else {
           nodeData.time = Math.floor(Date.now() / 1000) - (parsed.length - index - 1);
         }
+
+        const messageStyle = automaticStyles.get(item.qq);
+        if (messageStyle) nodeData.message_style = { ...messageStyle };
 
         // 注意：id 字段会导致协议端报 1200 错误，暂不添加
 
@@ -332,6 +414,7 @@ export class FakeChatTool extends AbstractTool {
       return [
         `已发送伪造聊天记录（${nodes.length} 条）：`,
         nodes.map(n => `${n.data.nickname}(${n.data.user_id})`).join('、'),
+        `；气泡样式已匹配 ${nodes.filter(n => n.data.message_style).length}/${nodes.length} 条。`,
         '卡片已经发出去了，回复时只需简短说一句，不要把伪造的内容再复述一遍。'
       ].join('');
     } catch (error) {
