@@ -4,7 +4,7 @@ export class VoiceTool extends AbstractTool {
   constructor() {
     super();
     this.name = 'voiceTool';
-    this.description = '这是一个实现你发送语音功能的工具，平常正常对话时、当你想发送语音时，调用此工具。';
+    this.description = '这是一个实现你发送语音功能的工具，平常正常对话时、当你想发送语音时调用此工具(注意此工具不是唱歌)。';
     this.parameters = {
       type: "object",
       properties: {
