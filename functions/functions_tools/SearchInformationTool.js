@@ -131,7 +131,7 @@ export class SearchInformationTool extends AbstractTool {
           apikey: apiKey
         },
         [{ role: "user", content: "请联网搜索：" + query }],
-        { stream: false }
+        { stream: false, temperature: 0.2 }
       )
 
       if (result.error) {

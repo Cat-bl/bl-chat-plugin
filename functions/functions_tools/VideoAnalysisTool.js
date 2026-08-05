@@ -54,6 +54,7 @@ export class VideoAnalysisTool extends AbstractTool {
             ],
           },
         ],
+        temperature: 0.2,
         stream: false
       }
 

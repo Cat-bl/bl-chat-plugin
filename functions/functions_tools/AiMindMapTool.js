@@ -116,7 +116,7 @@ export class AiMindMapTool extends AbstractTool {
       const result = await callAI(
         { url: apiUrl, model: apiModel, apikey: apiKey },
         messages,
-        { stream: false }
+        { stream: false, temperature: 0.2 }
       )
 
       if (result.error) {

@@ -338,8 +338,9 @@ export class ChatPlugin extends plugin {
     const data = {
       model: this.getModel(),
       messages,
-      temperature: 0.7,
-      top_p: 0.9
+      // 最终聊天偏自然表达；工具决策会在 YTapi 中单独降温。
+      temperature: 0.85,
+      top_p: 0.95
     }
 
     if (this.config.useTools && tools?.length && toolChoice !== "none") {

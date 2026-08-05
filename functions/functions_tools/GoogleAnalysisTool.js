@@ -226,7 +226,7 @@ export class GoogleImageAnalysisTool extends AbstractTool {
                         apikey: apiKey
                     },
                     history,
-                    { stream: false }
+                    { stream: false, temperature: 0.2 }
                 )
 
                 if (result.error) {

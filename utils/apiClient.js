@@ -22,6 +22,35 @@ import {
 const logger = global.logger || console;
 
 /**
+ * 构造正式聊天模型请求，保留上游已经确定的采样参数。
+ * 工具定义由工具模型处理，不传给正式聊天模型。
+ */
+export function buildChatRequestData(requestData, model, messages) {
+    const result = {
+        model,
+        messages,
+        stream: false
+    }
+
+    if (requestData?.temperature !== undefined) result.temperature = requestData.temperature
+    if (requestData?.top_p !== undefined) result.top_p = requestData.top_p
+    return result
+}
+
+/**
+ * 工具模型只负责选择动作和生成结构化参数，使用比最终聊天更稳定的采样参数。
+ */
+export function buildToolRequestData(requestData, model) {
+    return {
+        ...requestData,
+        model,
+        temperature: 0.3,
+        top_p: 0.9,
+        stream: false
+    }
+}
+
+/**
  * 发送请求到 OpenAI API 或其他提供者并处理响应
  * @param {Object} requestData - 请求体数据
  * @param {Object} config - 配置对象
@@ -52,11 +81,10 @@ export async function YTapi(requestData, config, toolContent, toolName) {
             let toolsResponse;
             try {
                 // 保留原始请求中的 tools 字段
-                let toolsRequestData = {
-                    ...requestData,
-                    model: config.toolsAiConfig.toolsAiModel,
-                    stream: false
-                };
+                let toolsRequestData = buildToolRequestData(
+                    requestData,
+                    config.toolsAiConfig.toolsAiModel
+                );
                 logger.debug("工具调用上下文：",JSON.stringify(toolsRequestData));
                 // 根据格式转换请求
                 if (toolsApiFormat === 'anthropic') {
@@ -146,11 +174,11 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                 'Content-Type': 'application/json'
             };
 
-            finalRequestData = {
-                model: config.chatAiConfig.chatApiModel,
-                messages: convertToolMessagesForChat(requestData.messages, toolName),
-                stream: false
-            };
+            finalRequestData = buildChatRequestData(
+                requestData,
+                config.chatAiConfig.chatApiModel,
+                convertToolMessagesForChat(requestData.messages, toolName)
+            );
         } else {
             // useTools 关闭，直接使用 OneAPI
             if (!config.chatAiConfig.chatApiUrl || !config.chatAiConfig.chatApiModel || !config.chatAiConfig.chatApiKey?.length) {
@@ -173,11 +201,11 @@ export async function YTapi(requestData, config, toolContent, toolName) {
                 'Authorization': `Bearer ${oneApiKey}`,
                 'Content-Type': 'application/json'
             };
-            finalRequestData = {
-                model: config.chatAiConfig.chatApiModel,
-                messages: requestData.messages,
-                stream: false
-            };
+            finalRequestData = buildChatRequestData(
+                requestData,
+                config.chatAiConfig.chatApiModel,
+                requestData.messages
+            );
         }
 
         // 发送 API 请求

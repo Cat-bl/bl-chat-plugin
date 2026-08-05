@@ -55,6 +55,7 @@ export const vlmMethods = {
       cfg.analysisApiModel ? "analysisApiModel" : null,
       {
         model: cfg.analysisApiModel || "gemini-3-pro-preview",
+        temperature: 0.2,
         messages: [{
           role: "user",
           content: [
@@ -115,6 +116,7 @@ export const vlmMethods = {
       cfg.analysisApiModel ? "analysisApiModel" : null,
       {
         model: cfg.analysisApiModel || "gemini-3-pro-preview",
+        temperature: 0.1,
         messages: [{
           role: "user",
           content: [
@@ -177,7 +179,8 @@ ${list}
         model: cfg.toolsAiModel || "gpt-4o-mini",
         apikey: cfg.toolsAiApikey
       },
-      [{ role: "user", content: prompt }]
+      [{ role: "user", content: prompt }],
+      { temperature: 0.1 }
     )
     if (result.error) {
       throw new Error(`tools API 调用失败: ${result.error}`)

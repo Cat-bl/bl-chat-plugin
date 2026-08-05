@@ -139,7 +139,10 @@ export const strictTrackingMethods = {
             content: `【近期对话记录】\n${historyText}\n\n【用户新消息】\n${userMessage}\n\n这条新消息是在跟机器人说话吗？`
           }
         ],
-        { signal: controller.signal }
+        {
+          temperature: 0.1,
+          signal: controller.signal
+        }
       )
 
       if (result.error) return false // 请求失败时默认不触发
@@ -252,7 +255,10 @@ ${recentHistory || '(无)'}
             content: `分别判断以下${batchWithIds.length}条来自不同用户的消息:\n\n${messagesText}\n\n返回JSON对象:`
           }
         ],
-        { signal: controller.signal }
+        {
+          temperature: 0.1,
+          signal: controller.signal
+        }
       )
 
       if (result.error) {
