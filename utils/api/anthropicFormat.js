@@ -58,6 +58,15 @@ export function convertToAnthropicFormat(requestData, originalRequestData) {
         messages: []
     }
 
+    const temperature = requestData.temperature
+    const topP = requestData.top_p
+    const hasTemperature = typeof temperature === 'number' && Number.isFinite(temperature) && temperature >= 0 && temperature <= 1
+    const hasTopP = typeof topP === 'number' && Number.isFinite(topP) && topP > 0 && topP <= 1
+
+    // Anthropic 建议 temperature/top_p 二选一；优先保留调用方明确设置的 temperature。
+    if (hasTemperature) anthropicRequest.temperature = temperature
+    else if (hasTopP) anthropicRequest.top_p = topP
+
     // 提取系统消息，并伪装成官方 Claude Code CLI：
     // system 必须是数组，且首块逐字为身份串（带 cache_control），原本的系统提示词追加在其后
     const systemBlocks = [
@@ -203,9 +212,11 @@ export function convertToAnthropicFormat(requestData, originalRequestData) {
         user_id: `user_${'0'.repeat(64)}_account__session_00000000-0000-4000-8000-000000000000`
     }
 
-    // 默认开启自适应思考；effort 不显式设置，走模型默认（Opus 4.8 默认 high）
-    // 不支持 thinking 的模型/中转会在请求失败时由 fetchWithThinkingFallback 自动去掉该字段重试，不报错
-    anthropicRequest.thinking = { type: 'adaptive' }
+    // 自适应思考与自定义采样参数存在协议兼容冲突：仅在调用方没有指定采样时启用。
+    // 不支持 thinking 的模型/中转会在请求失败时由 fetchWithThinkingFallback 自动去掉后重试。
+    if (!hasTemperature && !hasTopP) {
+        anthropicRequest.thinking = { type: 'adaptive' }
+    }
 
     return anthropicRequest
 }

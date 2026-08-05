@@ -10,6 +10,7 @@ import {
 } from '../utils/api/anthropicFormat.js';
 import { parseSSETextUnified, processResponse } from '../utils/api/responseParsing.js';
 import { convertToolMessagesForChat, moveFinalToolPromptToEnd } from '../utils/api/chatMessageAdapters.js';
+import { buildChatRequestData, buildToolRequestData } from '../utils/apiClient.js';
 import { FINAL_TOOL_PROMPT } from '../utils/textUtils.js';
 
 describe('API 格式检测', () => {
@@ -56,6 +57,19 @@ describe('Anthropic 请求格式转换', () => {
         assert.strictEqual(result.messages[0].role, 'user');
         assert.strictEqual(result.messages[0].content, '你好');
         assert.strictEqual(result.thinking.type, 'adaptive');
+    });
+
+    it('显式温度优先于自适应思考，并忽略同时提供的 top_p', () => {
+        const request = {
+            model: 'claude-sonnet',
+            temperature: 0.3,
+            top_p: 0.9,
+            messages: [{ role: 'user', content: '你好' }]
+        };
+        const result = convertToAnthropicFormat(request, request);
+        assert.strictEqual(result.temperature, 0.3);
+        assert.strictEqual('top_p' in result, false);
+        assert.strictEqual('thinking' in result, false);
     });
 
     it('空 messages 数组抛出异常', () => {
@@ -179,6 +193,43 @@ describe('Anthropic 请求格式转换', () => {
         const result = convertToAnthropicFormat(request, request);
         assert.strictEqual(result.tools[0].name, 'search');
         assert.strictEqual(result.tools[0].description, 'Search tool');
+    });
+});
+
+describe('主聊天与工具模型采样参数', () => {
+    it('正式聊天请求保留上游采样参数但不携带工具定义', () => {
+        const messages = [{ role: 'user', content: '你好' }];
+        const result = buildChatRequestData({
+            temperature: 0.85,
+            top_p: 0.95,
+            tools: [{ type: 'function' }],
+            tool_choice: 'auto'
+        }, 'chat-model', messages);
+
+        assert.deepStrictEqual(result, {
+            model: 'chat-model',
+            messages,
+            stream: false,
+            temperature: 0.85,
+            top_p: 0.95
+        });
+    });
+
+    it('工具模型覆盖为低温采样并保留工具定义', () => {
+        const tools = [{ type: 'function' }];
+        const result = buildToolRequestData({
+            messages: [{ role: 'user', content: '搜一下' }],
+            temperature: 0.85,
+            top_p: 0.95,
+            tools,
+            tool_choice: 'auto'
+        }, 'tool-model');
+
+        assert.strictEqual(result.model, 'tool-model');
+        assert.strictEqual(result.temperature, 0.3);
+        assert.strictEqual(result.top_p, 0.9);
+        assert.strictEqual(result.tools, tools);
+        assert.strictEqual(result.tool_choice, 'auto');
     });
 });
 

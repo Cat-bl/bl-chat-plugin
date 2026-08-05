@@ -9,7 +9,7 @@ import { AbstractTool } from './AbstractTool.js';
 // content 中的媒体占位写法：pic[链接] / file[链接] / video[链接]
 const MEDIA_RE = /(?:pic|file|video)\[([^\]]+)\]/g;
 const TYPE_MAP = { p: 'image', f: 'file', v: 'video' };
-const MAX_NODES = 30;
+const MAX_NODES = 99;
 
 function toForwardMessageStyle(msgStyle) {
   if (!msgStyle || typeof msgStyle !== 'object') return null;
