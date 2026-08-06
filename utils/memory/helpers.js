@@ -47,6 +47,10 @@ export function containsToolFeedback(content) {
   return TOOL_FEEDBACK_MARKERS.some(marker => text.includes(marker))
 }
 
+export function isLikelyBotCommand(content) {
+  return /^[#＃/／]\s*\S/.test(String(content || "").trim())
+}
+
 export function isRealUserSource(source) {
   return source === undefined || source === null || source === "" || source === "user" || source === "message"
 }
@@ -74,22 +78,38 @@ export function isSimilarContent(a, b) {
   return similarity >= 0.72 || (Math.min(na.length, nb.length) >= 6 && similarity >= 0.6)
 }
 
-export function extractJsonArray(content) {
+function normalizeJsonArrayValue(value) {
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== "object") return null
+  for (const key of ["operations", "items", "data", "results"]) {
+    if (Array.isArray(value[key])) return value[key]
+  }
+  return [value]
+}
+
+export function parseJsonArrayResult(content) {
   const text = String(content || "").trim()
+  if (!text) return { items: [], status: "empty" }
+
   // 找到第一个 [ 和最后一个 ]，截取中间部分尝试解析
   // 这样可以容忍 LLM 在 JSON 前后追加 markdown 围栏、解释文字等
   const start = text.indexOf("[")
   const end = text.lastIndexOf("]")
   if (start >= 0 && end > start) {
     const parsed = safeJsonParse(text.slice(start, end + 1), null)
-    if (Array.isArray(parsed)) return parsed
-    if (parsed && typeof parsed === "object") return [parsed]
+    const items = normalizeJsonArrayValue(parsed)
+    if (items) return { items, status: items.length ? "ok" : "empty" }
   }
+
   // 兜底：尝试解析整个文本
-  const parsed = safeJsonParse(text, [])
-  if (Array.isArray(parsed)) return parsed
-  if (parsed && typeof parsed === "object") return [parsed]
-  return []
+  const parsed = safeJsonParse(text, null)
+  const items = normalizeJsonArrayValue(parsed)
+  if (items) return { items, status: items.length ? "ok" : "empty" }
+  return { items: [], status: "invalid" }
+}
+
+export function extractJsonArray(content) {
+  return parseJsonArrayResult(content).items
 }
 
 export function keywordSet(text) {
@@ -137,14 +157,27 @@ export function normalizeConfig(config = {}) {
   merged.maxFactsPerUser = Math.max(1, Number(merged.maxFactsPerUser) || DEFAULT_CONFIG.maxFactsPerUser)
   merged.maxFactsPerGroup = Math.max(1, Number(merged.maxFactsPerGroup) || DEFAULT_CONFIG.maxFactsPerGroup)
   merged.memoryDecayDays = Math.max(1, Number(merged.memoryDecayDays) || DEFAULT_CONFIG.memoryDecayDays)
-  merged.userExtractDebounceSeconds = Math.max(1, Number(merged.userExtractDebounceSeconds) || DEFAULT_CONFIG.userExtractDebounceSeconds)
+  const userDebounce = Number(merged.userExtractDebounceSeconds)
+  merged.userExtractDebounceSeconds = Number.isFinite(userDebounce)
+    ? Math.max(0, userDebounce)
+    : DEFAULT_CONFIG.userExtractDebounceSeconds
   merged.userExtractMaxBatchMessages = Math.max(1, Number(merged.userExtractMaxBatchMessages) || DEFAULT_CONFIG.userExtractMaxBatchMessages)
   merged.groupExtractMinIntervalMinutes = Math.max(1, Number(merged.groupExtractMinIntervalMinutes) || DEFAULT_CONFIG.groupExtractMinIntervalMinutes)
   merged.groupExtractMaxBatchMessages = Math.max(1, Number(merged.groupExtractMaxBatchMessages) || DEFAULT_CONFIG.groupExtractMaxBatchMessages)
-  merged.promptMaxUserFacts = Math.max(1, Number(merged.promptMaxUserFacts) || DEFAULT_CONFIG.promptMaxUserFacts)
-  merged.promptMaxGroupFacts = Math.max(1, Number(merged.promptMaxGroupFacts) || DEFAULT_CONFIG.promptMaxGroupFacts)
-  merged.promptMaxChars = Math.max(200, Number(merged.promptMaxChars) || DEFAULT_CONFIG.promptMaxChars)
+  const promptMaxUserFacts = Number(merged.promptMaxUserFacts)
+  const promptMaxGroupFacts = Number(merged.promptMaxGroupFacts)
+  merged.promptMaxUserFacts = Number.isFinite(promptMaxUserFacts)
+    ? Math.max(0, promptMaxUserFacts)
+    : DEFAULT_CONFIG.promptMaxUserFacts
+  merged.promptMaxGroupFacts = Number.isFinite(promptMaxGroupFacts)
+    ? Math.max(0, promptMaxGroupFacts)
+    : DEFAULT_CONFIG.promptMaxGroupFacts
+  merged.promptMaxChars = Math.max(100, Number(merged.promptMaxChars) || DEFAULT_CONFIG.promptMaxChars)
   merged.semanticRecallTopK = Math.max(1, Number(merged.semanticRecallTopK) || DEFAULT_CONFIG.semanticRecallTopK)
+  const minFactsPerCategory = Number(merged.minFactsPerCategory)
+  merged.minFactsPerCategory = Number.isFinite(minFactsPerCategory)
+    ? Math.max(0, minFactsPerCategory)
+    : DEFAULT_CONFIG.minFactsPerCategory
 
   return merged
 }

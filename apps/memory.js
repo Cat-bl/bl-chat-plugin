@@ -205,7 +205,14 @@ export class MemoryCommands extends plugin {
         })
       }
 
-      await e.reply(result.deleted ? `已删除记忆 ${id}` : "没有找到可删除的记忆，普通用户只能删除自己的记忆")
+      const failureMessages = {
+        "id-too-short": "记忆 ID 至少需要输入前 8 位",
+        "ambiguous-id": "这个 ID 前缀匹配到多条记忆，请输入更完整的 ID",
+        "not-found": "没有找到可删除的记忆，普通用户只能删除自己的记忆"
+      }
+      await e.reply(result.deleted
+        ? `已删除记忆 ${id}`
+        : failureMessages[result.reason] || "没有找到可删除的记忆，普通用户只能删除自己的记忆")
     } catch (error) {
       logger.error("[记忆管理] 删除记忆失败:", error)
       await e.reply("删除记忆失败，请看日志")

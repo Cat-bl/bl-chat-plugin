@@ -42,7 +42,7 @@ export default [
     label: "用户记忆提取防抖（秒）",
     component: "InputNumber",
     bottomHelpMessage: "用户对话结束后，等待 N 秒再触发记忆提取，避免短时间重复调用",
-    componentProps: { min: 0, max: 600, placeholder: "90" }
+    componentProps: { min: 0, max: 600, placeholder: "45" }
   },
   {
     field: "memorySystem.userExtractMaxBatchMessages",

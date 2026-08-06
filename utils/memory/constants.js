@@ -26,7 +26,7 @@ export const DEFAULT_CONFIG = {
   maxFactsPerGroup: 50,
   importanceThreshold: 0.5,
   memoryDecayDays: 7,
-  userExtractDebounceSeconds: 90,
+  userExtractDebounceSeconds: 45,
   userExtractMaxBatchMessages: 6,
   groupExtractMinIntervalMinutes: 10,
   groupExtractMaxBatchMessages: 12,
@@ -41,6 +41,14 @@ export const DEFAULT_CONFIG = {
 }
 
 export const LEGACY_MEMORY_ROLLBACK_DAYS = 30
+export const DELETED_MEMORY_RETENTION_DAYS = 30
+export const MAX_DELETED_FACTS_PER_SCOPE = 200
+
+// 推测性用户事实不会直接进入长期记忆。它们先短期保留，跨两个独立
+// 抽取批次重复出现后再晋升，避免把单次闲聊误判成稳定偏好或习惯。
+export const USER_CANDIDATE_TTL_DAYS = 7
+export const USER_CANDIDATE_PROMOTION_COUNT = 2
+export const MAX_USER_CANDIDATES = 30
 
 export const TOOL_FEEDBACK_MARKERS = [
   "[tool_request]",

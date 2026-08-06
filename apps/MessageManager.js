@@ -1,5 +1,6 @@
 import { MessageManager } from '../utils/MessageManager.js'
 import { emojiPackManager } from '../utils/EmojiPackManager.js'
+import { getSharedState } from '../core/sharedState.js'
 import fs from 'fs';
 import YAML from 'yaml';
 export class MessageRecordPlugin extends plugin {
@@ -43,6 +44,10 @@ export class MessageRecordPlugin extends plugin {
     async onMessage(e) {
         await this.messageManager.recordMessage(e);
         emojiPackManager.maybeAutoCollect(e).catch(() => {});
+        const memoryManager = getSharedState()?.memoryManager;
+        memoryManager?.enqueueGroupEvent(e).catch(error => {
+            logger.error(`[MemoryManager] 全局消息入队失败: ${error.stack || error}`);
+        });
         return false;
     }
 
