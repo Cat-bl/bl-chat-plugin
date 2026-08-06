@@ -30,8 +30,8 @@ export class MemoryRetriever {
   }
 
   async retrieve({ groupId, userId = null, scope = "user", query = "", limit = 10 }) {
-    let meta = await this.store.getMeta(scope, groupId, userId)
-    if (meta.disabled) return { meta, facts: [] }
+    const meta = await this.store.getMeta(scope, groupId, userId)
+    if (meta.disabled || limit <= 0) return { meta, facts: [] }
 
     const facts = await this.store.getFacts(meta, false)
     let queryEmbedding = null
@@ -41,8 +41,12 @@ export class MemoryRetriever {
       queryEmbedding = result.embedding
     }
 
-    const scored = facts.map(fact => {
-      const semantic = queryEmbedding && fact.embedding ? cosineSimilarity(queryEmbedding, fact.embedding) : null
+    let scored = facts.map(fact => {
+      const embeddingIsCurrent = fact.embeddingHash &&
+        fact.embeddingHash === this.extractor.embeddingHashFor(fact.content)
+      const semantic = queryEmbedding && embeddingIsCurrent && fact.embedding
+        ? cosineSimilarity(queryEmbedding, fact.embedding)
+        : null
       const relevance = semantic ?? this.keywordRelevance(query, fact.content)
       const recency = this.recencyScore(fact)
       const score =
@@ -54,17 +58,13 @@ export class MemoryRetriever {
       return { ...fact, relevance, recency, score }
     })
 
+    if (queryEmbedding) {
+      scored = scored
+        .sort((a, b) => b.relevance - a.relevance)
+        .slice(0, this.config.semanticRecallTopK)
+    }
     scored.sort((a, b) => b.score - a.score)
     const selected = scored.slice(0, limit)
-
-    // 并行更新 lastUsed，避免串行 N 次 Redis 写入
-    await Promise.all(selected.map(fact => {
-      fact.lastUsed = now()
-      const scopeId = fact.scope === "user"
-        ? this.store.userScopeId(fact.groupId, fact.userId)
-        : this.store.groupScopeId(fact.groupId)
-      return this.store.setJson(this.store.factKey(fact.scope, scopeId, fact.id), fact)
-    }))
 
     return { meta, facts: selected }
   }

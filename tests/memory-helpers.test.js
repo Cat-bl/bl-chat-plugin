@@ -8,10 +8,12 @@ import {
   normalizeText,
   compactText,
   containsToolFeedback,
+  isLikelyBotCommand,
   isRealUserSource,
   charJaccard,
   isSimilarContent,
   extractJsonArray,
+  parseJsonArrayResult,
   keywordSet,
   cosineSimilarity,
   normalizeConfig
@@ -58,6 +60,12 @@ test("containsToolFeedback：识别工具痕迹标记", () => {
   assert.equal(containsToolFeedback("今天天气不错"), false)
 })
 
+test("isLikelyBotCommand：过滤常见机器人命令前缀", () => {
+  assert.equal(isLikelyBotCommand("#表情包列表"), true)
+  assert.equal(isLikelyBotCommand("/help"), true)
+  assert.equal(isLikelyBotCommand("今天聊聊 #AI"), false)
+})
+
 test("isRealUserSource：仅用户来源为真", () => {
   assert.equal(isRealUserSource(undefined), true)
   assert.equal(isRealUserSource(""), true)
@@ -86,6 +94,15 @@ test("extractJsonArray：容忍围栏与解释文字", () => {
   assert.deepEqual(extractJsonArray("完全不是 JSON"), [])
 })
 
+test("parseJsonArrayResult：区分空结果、非法格式并兼容包装对象", () => {
+  assert.deepEqual(parseJsonArrayResult("[]"), { items: [], status: "empty" })
+  assert.deepEqual(parseJsonArrayResult("完全不是 JSON"), { items: [], status: "invalid" })
+  assert.deepEqual(parseJsonArrayResult('{"operations":[{"operation":"upsert"}]}'), {
+    items: [{ operation: "upsert" }],
+    status: "ok"
+  })
+})
+
 test("keywordSet：分词并生成中文 2-gram", () => {
   const set = keywordSet("hello 世界真好")
   assert.equal(set.has("hello"), true)
@@ -109,6 +126,17 @@ test("normalizeConfig：默认值合并与数值兜底", () => {
   const clamped = normalizeConfig({ importanceThreshold: 5, maxFactsPerUser: -3 })
   assert.equal(clamped.importanceThreshold, 1)
   assert.equal(clamped.maxFactsPerUser, 1)
+
+  const zeroValues = normalizeConfig({
+    userExtractDebounceSeconds: 0,
+    promptMaxUserFacts: 0,
+    promptMaxGroupFacts: 0,
+    minFactsPerCategory: 0
+  })
+  assert.equal(zeroValues.userExtractDebounceSeconds, 0)
+  assert.equal(zeroValues.promptMaxUserFacts, 0)
+  assert.equal(zeroValues.promptMaxGroupFacts, 0)
+  assert.equal(zeroValues.minFactsPerCategory, 0)
 })
 
 test("normalizeConfig：兼容旧字段 groupExtractMinInterval（毫秒/分钟自适应）", () => {

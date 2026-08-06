@@ -810,7 +810,7 @@ export class ChatPlugin extends plugin {
     session.groupUserMessages = this.trimMessageHistory(messages)
     await this.saveGroupUserMessages(e.group_id, e.user_id, messages)
 
-    // 更新情感、记忆、表达学习（异步，不阻塞）
+    // 更新情感、关系分、表达学习（异步，不阻塞）
     // 使用 e.msg 纯消息内容，而不是格式化的 userContent
     this.updateEnhancedSystems(e, e.msg || '', output).catch(err => {
       logger.error('[增强系统] 更新失败:', err)
@@ -818,7 +818,7 @@ export class ChatPlugin extends plugin {
   }
 
   /**
-   * 异步更新情感系统、长期记忆
+   * 异步更新情感系统和关系分；用户/群记忆由全局消息记录器处理
    */
   async updateEnhancedSystems(e, userMessage, botReply) {
     const { group_id: groupId, user_id: userId } = e
@@ -830,16 +830,9 @@ export class ChatPlugin extends plugin {
       emotionState = await this.emotionManager.updateEmotionFromMessage(groupId, userMessage, isAtBot)
     }
 
-    // 2. 提取并保存长期记忆（后台异步）
+    // 2. 更新关系分。用户记忆和群记忆都由全局消息记录器统一入队，
+    // 覆盖机器人未回复的真实群消息，并避免在回复路径重复抽取。
     if (this.config.memorySystem?.enabled) {
-      // 不 await，让它在后台执行
-      this.memoryManager.extractAndSaveMemories(groupId, userId, userMessage, botReply, {
-        source: "user",
-        messageId: e.message_id,
-        senderName: e.sender?.card || e.sender?.nickname
-      }).catch(err => {
-        logger.error('[MemoryManager] 用户记忆提取异常:', err)
-      })
       const latestEmotionEvent = emotionState?.recentEvents?.[0]
       if (latestEmotionEvent && Number.isFinite(latestEmotionEvent.delta)) {
         const relationDelta = Math.max(-0.03, Math.min(0.03, latestEmotionEvent.delta * 0.2))
@@ -848,21 +841,6 @@ export class ChatPlugin extends plugin {
             logger.error('[MemoryManager] 根据情绪更新关系分失败:', err)
           })
         }
-      }
-      // 提取群全局记忆（传入聊天记录）
-      if (groupId) {
-        const history = await this.messageManager.getMessages('group', groupId)
-        const chatHistory = (history || []).slice(0, 40).map(msg => ({
-          role: msg.sender?.user_id === Bot.uin ? 'assistant' : 'user',
-          source: msg.source || (msg.sender?.user_id === Bot.uin ? "send" : "user"),
-          userId: msg.sender?.user_id,
-          user_id: msg.sender?.user_id,
-          senderName: msg.sender?.nickname || msg.sender?.card || '群成员',
-          content: msg.content
-        }))
-        this.memoryManager.extractAndSaveGroupMemories(groupId, chatHistory).catch(err => {
-          logger.error('[MemoryManager] 群记忆提取异常:', err)
-        })
       }
     }
 

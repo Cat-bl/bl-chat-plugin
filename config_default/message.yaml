@@ -223,7 +223,7 @@ pluginSettings:
     maxFactsPerGroup: 50
     importanceThreshold: 0.5
     memoryDecayDays: 7
-    userExtractDebounceSeconds: 90
+    userExtractDebounceSeconds: 45
     userExtractMaxBatchMessages: 6
     groupExtractMinIntervalMinutes: 10
     groupExtractMaxBatchMessages: 12

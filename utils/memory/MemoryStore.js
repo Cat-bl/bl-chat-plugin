@@ -1,8 +1,16 @@
 // redis 事实存储层：作用域 key 规划、meta/fact CRUD、容量裁剪、旧版数据迁移。
 // 从 MemoryManager.js 拆出（行为等价搬迁）。
 import { randomUUID } from "crypto"
-import { USER_CATEGORIES, GROUP_CATEGORIES, LEGACY_MEMORY_ROLLBACK_DAYS } from "./constants.js"
-import { now, clamp, uniq, safeJsonParse, compactText, containsToolFeedback } from "./helpers.js"
+import {
+  USER_CATEGORIES,
+  GROUP_CATEGORIES,
+  LEGACY_MEMORY_ROLLBACK_DAYS,
+  DELETED_MEMORY_RETENTION_DAYS,
+  MAX_DELETED_FACTS_PER_SCOPE,
+  USER_CANDIDATE_TTL_DAYS,
+  MAX_USER_CANDIDATES
+} from "./constants.js"
+import { now, clamp, uniq, sha256, safeJsonParse, compactText, containsToolFeedback } from "./helpers.js"
 
 export class MemoryStore {
   constructor(config) {
@@ -38,10 +46,15 @@ export class MemoryStore {
     return `${this.v2Prefix}fact:${scope}:${scopeId}:${factId}`
   }
 
+  userCandidateKey(groupId, userId) {
+    return `${this.v2Prefix}candidate:user:${groupId}:${userId}`
+  }
+
   async setRaw(key, value, ttlSeconds = null) {
     if (ttlSeconds) {
       try {
         await redis.set(key, value, { EX: ttlSeconds })
+        if (typeof redis.expire === "function") await redis.expire(key, ttlSeconds)
         return
       } catch {
         try {
@@ -99,9 +112,7 @@ export class MemoryStore {
   }
 
   async deleteKeys(keys = []) {
-    for (const key of keys.filter(Boolean)) {
-      await redis.del(key)
-    }
+    await Promise.all(uniq(keys).map(key => redis.del(key)))
   }
 
   createMeta(scope, groupId, userId = null) {
@@ -111,6 +122,7 @@ export class MemoryStore {
       groupId: String(groupId),
       userId: userId === null || userId === undefined ? null : String(userId),
       factIds: [],
+      deletedFactIds: [],
       disabled: false,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -136,6 +148,7 @@ export class MemoryStore {
     merged.groupId = String(groupId)
     merged.userId = userId === null || userId === undefined ? null : String(userId)
     merged.factIds = uniq(Array.isArray(merged.factIds) ? merged.factIds : [])
+    merged.deletedFactIds = uniq(Array.isArray(merged.deletedFactIds) ? merged.deletedFactIds : [])
     merged.disabled = Boolean(merged.disabled)
     merged.updatedAt = Number(merged.updatedAt) || now()
     merged.createdAt = Number(merged.createdAt) || merged.updatedAt
@@ -226,7 +239,10 @@ export class MemoryStore {
   }
 
   async getFacts(meta, includeDeleted = false) {
-    const factResults = await Promise.all((meta.factIds || []).map(factId => this.getFactForMeta(meta, factId)))
+    const factIds = includeDeleted
+      ? uniq([...(meta.factIds || []), ...(meta.deletedFactIds || [])])
+      : (meta.factIds || [])
+    const factResults = await Promise.all(factIds.map(factId => this.getFactForMeta(meta, factId)))
     const facts = []
     for (const fact of factResults) {
       if (!fact) continue
@@ -245,6 +261,7 @@ export class MemoryStore {
     if (!meta.factIds.includes(normalized.id)) {
       meta.factIds.push(normalized.id)
     }
+    meta.deletedFactIds = (meta.deletedFactIds || []).filter(id => id !== normalized.id)
 
     normalized.updatedAt = now()
     const scopeId = normalized.scope === "user"
@@ -257,10 +274,56 @@ export class MemoryStore {
     return normalized
   }
 
+  normalizeUserCandidate(candidate, groupId, userId) {
+    const timestamp = now()
+    return {
+      id: String(candidate?.id || randomUUID()),
+      groupId: String(groupId),
+      userId: String(userId),
+      content: compactText(candidate?.content),
+      category: this.normalizeCategory("user", candidate?.category),
+      importance: clamp(candidate?.importance ?? 0.4, 0, 1),
+      confidence: clamp(candidate?.confidence ?? 0.5, 0, 1),
+      evidenceKeys: uniq(candidate?.evidenceKeys || []),
+      sourceMessageIds: uniq(candidate?.sourceMessageIds || []),
+      firstSeenAt: Number(candidate?.firstSeenAt) || timestamp,
+      lastSeenAt: Number(candidate?.lastSeenAt) || timestamp
+    }
+  }
+
+  async getUserCandidates(groupId, userId) {
+    const raw = await this.getJson(this.userCandidateKey(groupId, userId), [])
+    const cutoff = now() - USER_CANDIDATE_TTL_DAYS * 24 * 60 * 60 * 1000
+    return (Array.isArray(raw) ? raw : [])
+      .map(candidate => this.normalizeUserCandidate(candidate, groupId, userId))
+      .filter(candidate => candidate.content && candidate.lastSeenAt >= cutoff)
+  }
+
+  async saveUserCandidates(groupId, userId, candidates = []) {
+    const normalized = candidates
+      .map(candidate => this.normalizeUserCandidate(candidate, groupId, userId))
+      .filter(candidate => candidate.content)
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+      .slice(0, MAX_USER_CANDIDATES)
+
+    const key = this.userCandidateKey(groupId, userId)
+    if (!normalized.length) {
+      await redis.del(key)
+      return []
+    }
+
+    const ttlSeconds = USER_CANDIDATE_TTL_DAYS * 24 * 60 * 60
+    await this.setJson(key, normalized, ttlSeconds)
+    return normalized
+  }
+
+  async clearUserCandidates(groupId, userId) {
+    await redis.del(this.userCandidateKey(groupId, userId))
+  }
+
   async deleteFact(meta, factId) {
     const fact = await this.getFactForMeta(meta, factId)
     meta.factIds = meta.factIds.filter(id => id !== factId)
-    await this.saveMeta(meta)
 
     if (fact) {
       fact.status = "deleted"
@@ -268,8 +331,23 @@ export class MemoryStore {
       const scopeId = fact.scope === "user"
         ? this.userScopeId(fact.groupId, fact.userId)
         : this.groupScopeId(fact.groupId)
-      await this.setJson(this.factKey(fact.scope, scopeId, fact.id), fact)
+      const ttlSeconds = DELETED_MEMORY_RETENTION_DAYS * 24 * 60 * 60
+      await this.setJson(this.factKey(fact.scope, scopeId, fact.id), fact, ttlSeconds)
+      meta.deletedFactIds = uniq([...(meta.deletedFactIds || []), fact.id])
+    } else {
+      meta.deletedFactIds = (meta.deletedFactIds || []).filter(id => id !== factId)
     }
+
+    if (meta.deletedFactIds.length > MAX_DELETED_FACTS_PER_SCOPE) {
+      const expiredIds = meta.deletedFactIds.slice(0, meta.deletedFactIds.length - MAX_DELETED_FACTS_PER_SCOPE)
+      const scopeId = meta.scope === "user"
+        ? this.userScopeId(meta.groupId, meta.userId)
+        : this.groupScopeId(meta.groupId)
+      await this.deleteKeys(expiredIds.map(id => this.factKey(meta.scope, scopeId, id)))
+      meta.deletedFactIds = meta.deletedFactIds.slice(-MAX_DELETED_FACTS_PER_SCOPE)
+    }
+
+    await this.saveMeta(meta)
 
     return Boolean(fact)
   }
@@ -279,6 +357,10 @@ export class MemoryStore {
     if ((meta.factIds || []).length <= maxFacts) return
 
     const facts = await this.getFacts(meta, false)
+    const activeIds = new Set(facts.map(fact => fact.id))
+    meta.factIds = meta.factIds.filter(id => activeIds.has(id))
+    if (meta.factIds.length <= maxFacts) return
+
     facts.sort((a, b) => {
       if (a.importance !== b.importance) return a.importance - b.importance
       return (a.lastUsed || a.updatedAt) - (b.lastUsed || b.updatedAt)
@@ -288,15 +370,10 @@ export class MemoryStore {
     const removeIds = new Set(facts.slice(0, removeCount).map(f => f.id))
     meta.factIds = meta.factIds.filter(id => !removeIds.has(id))
 
-    // 并行标记删除，避免串行 Redis 写入
-    await Promise.all(facts.filter(f => removeIds.has(f.id)).map(fact => {
-      fact.status = "deleted"
-      fact.updatedAt = now()
-      const scopeId = fact.scope === "user"
-        ? this.userScopeId(fact.groupId, fact.userId)
-        : this.groupScopeId(fact.groupId)
-      return this.setJson(this.factKey(fact.scope, scopeId, fact.id), fact)
-    }))
+    const scopeId = meta.scope === "user"
+      ? this.userScopeId(meta.groupId, meta.userId)
+      : this.groupScopeId(meta.groupId)
+    await this.deleteKeys([...removeIds].map(id => this.factKey(meta.scope, scopeId, id)))
   }
 
   factFromLegacy(raw, scope, groupId, userId, category) {
@@ -305,7 +382,7 @@ export class MemoryStore {
     if (!content || containsToolFeedback(content)) return null
 
     return this.normalizeFact({
-      id: data.id || randomUUID(),
+      id: data.id || sha256(`legacy:${scope}:${groupId}:${userId || ""}:${category}:${content}`),
       scope,
       groupId,
       userId,
@@ -415,12 +492,16 @@ export class MemoryStore {
   async clearScope(scope, groupId, userId = null) {
     const meta = await this.getMeta(scope, groupId, userId)
     const scopeId = scope === "user" ? this.userScopeId(groupId, userId) : this.groupScopeId(groupId)
-    const factKeys = meta.factIds.map(id => this.factKey(scope, scopeId, id))
+    const indexedFactKeys = uniq([...(meta.factIds || []), ...(meta.deletedFactIds || [])])
+      .map(id => this.factKey(scope, scopeId, id))
+    const scannedFactKeys = await this.scanKeys(this.factKey(scope, scopeId, "*"))
+    const factKeys = uniq([...indexedFactKeys, ...scannedFactKeys])
     await this.deleteKeys(factKeys)
     await redis.del(this.metaKey(scope, groupId, userId))
 
     if (scope === "user") {
       await redis.del(this.legacyUserKey(groupId, userId))
+      await this.clearUserCandidates(groupId, userId)
     } else {
       await redis.del(this.legacyGroupKey(groupId))
     }

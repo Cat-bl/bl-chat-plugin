@@ -43,6 +43,9 @@ export function buildMemoryConfig(config) {
     ...memorySystem,
     memoryAiConfig: config.memoryAiConfig || null,
     embeddingAiConfig: config.embeddingAiConfig || null,
+    pluginEnabled: config.enabled !== false,
+    enableGroupWhitelist: Boolean(config.enableGroupWhitelist),
+    allowedGroups: Array.isArray(config.allowedGroups) ? config.allowedGroups : [],
     groupExtractMinIntervalMinutes:
       memorySystem.groupExtractMinIntervalMinutes ?? memorySystem.groupExtractMinInterval ?? 10
   }
