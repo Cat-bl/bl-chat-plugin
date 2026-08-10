@@ -256,6 +256,7 @@ pluginSettings:
     enabled: false
     dbPath: plugins/bl-chat-plugin/database/emoji-packs.ndjson
     storeDir: plugins/bl-chat-plugin/database/emoji_files
+    importDir: plugins/bl-chat-plugin/database/emoji_import
     maxItems: 200
     autoCollect: false
     visionTagOnAdd: true
