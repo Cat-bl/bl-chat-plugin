@@ -526,7 +526,7 @@ MCP 管理命令：
 | `enabled` | boolean | `false` | **系统主开关**。关闭时 `sendLocalEmojiTool` 不暴露给 LLM、autoCollect 不工作、维护循环不启动 |
 | `dbPath` | string | `plugins/bl-chat-plugin/database/emoji-packs.ndjson` | 元数据 ndjson 文件路径，相对路径相对 Yunzai 根目录 |
 | `storeDir` | string | `plugins/bl-chat-plugin/database/emoji_files` | 表情包图片本体存放目录 |
-| `importDir` | string | `plugins/bl-chat-plugin/database/emoji_import` | 批量导入扫描目录。把改名后的图片丢进来发 `#表情包入库` 即可 |
+| `importDir` | string | `plugins/bl-chat-plugin/database/emoji_import` | 批量导入扫描目录，`emojiSystem.enabled: true` 时自动创建。把改名后的图片丢进来发 `#表情包入库` 即可 |
 
 > **批量入库（`#表情包入库`）**：文件名即元数据，格式 `描述文字[tag1,tag2].png`——tags 可省略，支持全角 `【】` 与 `，`、`、` 分隔，描述截断 300 字，描述与 tags 皆空的文件会被拒绝。批量入库**跳过 VLM 内容审查与打标**（零 VLM 成本，描述/tag 完全由文件名决定），但仍会用描述生成 embedding（需配好 `embeddingAiConfig`），语义召回只认描述，建议务必写描述。成功/重复的源文件会被删除，失败的保留供修正后重跑。注意：库满且 `doReplace: true` 时每张图都会触发一次 LLM 替换决策，批量导入前建议先确认容量。
 
@@ -631,7 +631,7 @@ MCP 管理命令：
 2. 给每张图改名，文件名即元数据：`描述文字[tag1,tag2].png`
    - 描述建议 10-40 字，写清"画面 + 情绪 + 使用场景"，例：`无语翻白眼的猫适合吐槽离谱发言[无语,猫猫].gif`。语义召回只认描述，写得越具体选图越准
    - tags 可省略（`开心到飞起.png` 也合法）；分隔符支持 `,` `，` `、`，括号支持全角 `【】`
-3. 把改名后的图片放入 `plugins/bl-chat-plugin/database/emoji_import/`（首次可先发一遍 `#表情包入库`，目录会自动创建并回复使用说明）
+3. 把改名后的图片放入 `plugins/bl-chat-plugin/database/emoji_import/`（启用表情包系统后该目录自动创建；也可先发一遍 `#表情包入库` 查看完整路径和说明）
 4. bot 内发 `#表情包入库`（主人权限），等待合并转发的结果报告
 5. 按报告善后：✅ 成功 / ⚠️ 已存在的源文件已自动删除；❌ 失败的源文件保留，按提示原因（改名/换图）修正后重发 `#表情包入库` 即可只重跑失败部分；行尾提示 embedding 生成失败时，检查 `embeddingAiConfig` 后用 `#表情包删除` 删掉该图重新入库
 6. `#表情包预览 <hash前缀>` 抽查描述/tags/embedding，`#表情包统计` 看整体覆盖情况

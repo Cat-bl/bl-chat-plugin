@@ -94,6 +94,10 @@ export class EmojiPackManager {
       this.embeddingAiConfig = settings.embeddingAiConfig || {}
       this.toolsAiConfig = settings.toolsAiConfig || {}
       this.configMtimeMs = stat.mtimeMs
+      // 启用时自动建批量导入目录，用户重启/热开启后即可直接丢图，无需先发一次 #表情包入库
+      if (this.config.enabled) {
+        try { fs.mkdirSync(this.importDir, { recursive: true }) } catch {}
+      }
       this.ensureMaintenanceRunning()
     } catch (err) {
       logWarn(`刷新配置失败: ${err.message}`)
