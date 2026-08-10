@@ -1,14 +1,37 @@
 import { emojiPackManager } from "../utils/EmojiPackManager.js"
+import { parseImportFileName } from "../utils/emoji/importName.js"
 import { TakeImages } from "../utils/fileUtils.js"
 import common from "../../../lib/common/common.js"
 import fs from "fs"
 import path from "path"
+
+// #表情包入库 并发守卫：两次入库并发会互删源文件产生假失败
+let importDirRunning = false
+
+// 批量入库支持的图片扩展名（与 detectExtFromBuffer 支持的格式一致）
+const IMPORT_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"])
 
 async function fetchImageBuffer(url, timeoutMs = 15000) {
   const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return Buffer.from(await response.arrayBuffer())
 }
+
+const hashShort = h => (h ? String(h).slice(0, 8) : "????????")
+
+const rejectReasonText = (r) => ({
+  too_tiny: "文件过小 (<1KB)",
+  too_large: "文件过大 (>10MB)",
+  too_small: `图片尺寸过小 (${r.width}×${r.height}<96px)`,
+  too_large_dim: `图片尺寸过大 (${r.width}×${r.height}>1500px)`,
+  extreme_aspect: `极端纵横比 (${r.ratio})`,
+  metadata_failed: `图片解析失败: ${r.error || ""}`,
+  content_filtered: `内容审查拒绝: ${r.filterReason || ""}`,
+  content_filter_error: `内容审查异常: ${r.error || ""}`,
+  tag_failed: `VLM 打标失败: ${r.error || ""}`,
+  tag_blacklist: `tag 命中黑名单 [${(r.hitTags || []).join(",")}]`,
+  unsupported_format: "不支持的图片格式"
+}[r.reason] || `未知原因: ${r.reason}`)
 
 async function sendForward(e, msgs, title = "表情包") {
   try {
@@ -28,6 +51,9 @@ export class EmojiPackPlugin extends plugin {
       priority: 500,
       rule: [
         { reg: "^#表情包导入$", fnc: "importEmoji", permission: "master" },
+        { reg: "^#表情包入库$", fnc: "importFromDir", permission: "master" },
+        // 带参数：参数即元数据（描述文字[tag1,tag2]），从引用/当前消息取一张图直接入库
+        { reg: "^#表情包入库\\s+[\\s\\S]+$", fnc: "importWithMeta", permission: "master" },
         { reg: "^#表情包列表(\\s+\\d+)?$", fnc: "listEmoji", permission: "master" },
         // hash 前缀可选：传了走前缀匹配；不传则从当前/引用消息提取图片用全 hash 精确匹配
         { reg: "^#表情包删除(\\s+\\S+)?$", fnc: "deleteEmoji", permission: "master" },
@@ -85,20 +111,6 @@ export class EmojiPackPlugin extends plugin {
     e.reply(`正在导入 ${urls.length} 张图片...`)
 
     const results = []
-    const hashShort = h => (h ? String(h).slice(0, 8) : "????????")
-    const rejectReasonText = (r) => ({
-      too_tiny: "文件过小 (<1KB)",
-      too_large: "文件过大 (>5MB)",
-      too_small: `图片尺寸过小 (${r.width}×${r.height}<96px)`,
-      too_large_dim: `图片尺寸过大 (${r.width}×${r.height}>1500px)`,
-      extreme_aspect: `极端纵横比 (${r.ratio})`,
-      metadata_failed: `图片解析失败: ${r.error || ""}`,
-      content_filtered: `内容审查拒绝: ${r.filterReason || ""}`,
-      content_filter_error: `内容审查异常: ${r.error || ""}`,
-      tag_failed: `VLM 打标失败: ${r.error || ""}`,
-      tag_blacklist: `tag 命中黑名单 [${(r.hitTags || []).join(",")}]`,
-      unsupported_format: "不支持的图片格式"
-    }[r.reason] || `未知原因: ${r.reason}`)
 
     for (const url of urls) {
       try {
@@ -122,6 +134,179 @@ export class EmojiPackPlugin extends plugin {
 
     await sendForward(e, ["表情包导入结果:", ...results], "表情包导入")
     return true
+  }
+
+  /**
+   * #表情包入库：扫描 importDir 目录批量入库。
+   * 文件名即元数据（描述文字[tag1,tag2].png），跳过 VLM 审查与打标，用文件名描述生成 embedding。
+   * 成功或重复的源文件删除，失败的保留供修正后重跑。
+   */
+  async importFromDir(e) {
+    emojiPackManager.refreshConfig()
+    if (!emojiPackManager.config?.enabled) {
+      return e.reply("表情包系统未启用，请先在 config/message.yaml 将 emojiSystem.enabled 设为 true")
+    }
+    if (importDirRunning) return e.reply("已有一次入库任务在进行中，请稍后再试")
+    importDirRunning = true
+    try {
+      const dir = emojiPackManager.importDir
+      let entries
+      try {
+        await fs.promises.mkdir(dir, { recursive: true })
+        entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      } catch (err) {
+        return e.reply(`读取导入目录失败: ${err.message}`)
+      }
+      const files = entries
+        .filter(d => d.isFile() && IMPORT_EXTS.has(path.extname(d.name).toLowerCase()))
+        .map(d => d.name)
+        .sort()
+
+      if (!files.length) {
+        return e.reply([
+          "导入目录为空。使用方法：",
+          `1. 把表情包图片放入目录：${dir}`,
+          "2. 按「描述文字[tag1,tag2].png」格式命名（tags 可省略，也支持全角【】和，、分隔）",
+          "   例：无语翻白眼的猫[无语,猫猫].gif",
+          "   建议务必填写描述文字，语义召回只认描述",
+          "3. 再次发送 #表情包入库",
+          "支持 jpg/jpeg/png/gif/webp/bmp；成功或重复的源文件会被删除，失败的保留",
+          "单张入库：引用带图消息（或自带图）发 #表情包入库 描述文字[tag1,tag2]"
+        ].join("\n"))
+      }
+
+      e.reply(`开始入库 ${files.length} 个文件...`)
+
+      let added = 0, dup = 0, failed = 0, embedWarn = false
+      const lines = []
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        const meta = parseImportFileName(path.parse(f).name)
+        if (!meta.description && !meta.tags.length) {
+          lines.push(`❌ ${f} 文件名未含描述或标签（源文件保留）`)
+          failed++
+          continue
+        }
+
+        const absFile = path.join(dir, f)
+        let buffer
+        try {
+          buffer = await fs.promises.readFile(absFile)
+        } catch (err) {
+          lines.push(`❌ ${f} 读取失败: ${err.message}（源文件保留）`)
+          failed++
+          continue
+        }
+
+        let result
+        try {
+          result = await emojiPackManager.addFromBuffer(buffer, {
+            source: "user",
+            autoTag: false,
+            skipContentFilter: true,
+            presetDescription: meta.description,
+            presetTags: meta.tags
+          })
+        } catch (err) {
+          lines.push(`❌ ${f} 处理失败: ${err.message}（源文件保留）`)
+          failed++
+          continue
+        }
+
+        if (result.added) {
+          await fs.promises.unlink(absFile).catch(() => {})
+          let line = `✅ ${result.item.hash.slice(0, 8)} ${f} [${meta.tags.join(",") || "无标签"}]`
+          if (emojiPackManager.config.useEmbedding !== false && meta.description && !result.item.embedding) {
+            line += "（⚠️ embedding 生成失败）"
+            embedWarn = true
+          }
+          lines.push(line)
+          added++
+        } else if (result.reason === "duplicate") {
+          await fs.promises.unlink(absFile).catch(() => {})
+          lines.push(`⚠️ ${f} 已存在（${hashShort(result.item?.hash)}），源文件已删除`)
+          dup++
+        } else if (result.reason === "full") {
+          lines.push(`❌ 库已满（${emojiPackManager.config.maxItems} 张），剩余 ${files.length - i} 个文件已保留`)
+          break
+        } else {
+          lines.push(`❌ ${f} ${rejectReasonText(result)}（源文件保留）`)
+          failed++
+        }
+      }
+
+      const msgs = [`表情包入库完成：成功 ${added} | 重复 ${dup} | 失败 ${failed}（共 ${files.length} 个文件）`]
+      if (embedWarn) {
+        msgs.push("⚠️ 部分表情 embedding 生成失败，将无法被语义召回：请检查 embeddingAiConfig 配置后，用 #表情包删除 删除对应表情并重新入库")
+      }
+      for (let i = 0; i < lines.length; i += 20) {
+        msgs.push(lines.slice(i, i + 20).join("\n"))
+      }
+      await sendForward(e, msgs, "表情包入库")
+      return true
+    } finally {
+      importDirRunning = false
+    }
+  }
+
+  /**
+   * #表情包入库 描述文字[tag1,tag2]：从引用/当前消息取第一张图，用参数作元数据直接入库。
+   * 与文件夹批量入库共用元数据语法与入库通道（跳过 VLM 审查/打标）。
+   */
+  async importWithMeta(e) {
+    emojiPackManager.refreshConfig()
+    if (!emojiPackManager.config?.enabled) {
+      return e.reply("表情包系统未启用，请先在 config/message.yaml 将 emojiSystem.enabled 设为 true")
+    }
+
+    const metaText = String(e.msg || "").replace(/^#表情包入库/, "").trim()
+    const meta = parseImportFileName(metaText)
+    if (!meta.description && !meta.tags.length) {
+      return e.reply("请在指令后写描述，例：#表情包入库 无语翻白眼的猫[无语,猫猫]")
+    }
+
+    const urls = await TakeImages(e)
+    if (!urls?.length) {
+      return e.reply("请引用一条带图消息，或在当前消息附带图片后再发送")
+    }
+
+    let buffer
+    try {
+      buffer = await fetchImageBuffer(urls[0])
+    } catch (err) {
+      return e.reply(`图片下载失败: ${err.message}`)
+    }
+
+    let result
+    try {
+      result = await emojiPackManager.addFromBuffer(buffer, {
+        source: "user",
+        autoTag: false,
+        skipContentFilter: true,
+        presetDescription: meta.description,
+        presetTags: meta.tags
+      })
+    } catch (err) {
+      return e.reply(`处理失败: ${err.message}`)
+    }
+
+    if (result.added) {
+      const parts = [`✅ 已入库 ${result.item.hash.slice(0, 8)} [${meta.tags.join(",") || "无标签"}]`]
+      if (emojiPackManager.config.useEmbedding !== false && meta.description && !result.item.embedding) {
+        parts.push("⚠️ embedding 生成失败，无法被语义召回，请检查 embeddingAiConfig 后用 #表情包删除 删掉重新入库")
+      }
+      if (urls.length > 1) {
+        parts.push(`（检测到 ${urls.length} 张图，只入库了第一张）`)
+      }
+      return e.reply(parts.join("\n"))
+    }
+    if (result.reason === "duplicate") {
+      return e.reply(`⚠️ 该图已存在（${hashShort(result.item?.hash)}），未修改。如需更新描述请先 #表情包删除 再重新入库`)
+    }
+    if (result.reason === "full") {
+      return e.reply(`❌ 库已满（${emojiPackManager.config.maxItems} 张）`)
+    }
+    return e.reply(`❌ ${rejectReasonText(result)}`)
   }
 
   async listEmoji(e) {

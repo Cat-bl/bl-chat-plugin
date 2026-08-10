@@ -16,6 +16,7 @@ const DEFAULT_EMOJI_CONFIG = {
   enabled: false,
   dbPath: "plugins/bl-chat-plugin/database/emoji-packs.ndjson",
   storeDir: "plugins/bl-chat-plugin/database/emoji_files",
+  importDir: "plugins/bl-chat-plugin/database/emoji_import",
   maxItems: 200,
   autoCollect: false,
   visionTagOnAdd: true,
@@ -93,6 +94,10 @@ export class EmojiPackManager {
       this.embeddingAiConfig = settings.embeddingAiConfig || {}
       this.toolsAiConfig = settings.toolsAiConfig || {}
       this.configMtimeMs = stat.mtimeMs
+      // 启用时自动建批量导入目录，用户重启/热开启后即可直接丢图，无需先发一次 #表情包入库
+      if (this.config.enabled) {
+        try { fs.mkdirSync(this.importDir, { recursive: true }) } catch {}
+      }
       this.ensureMaintenanceRunning()
     } catch (err) {
       logWarn(`刷新配置失败: ${err.message}`)
@@ -106,6 +111,11 @@ export class EmojiPackManager {
 
   get storeDir() {
     const p = this.config.storeDir || DEFAULT_EMOJI_CONFIG.storeDir
+    return path.isAbsolute(p) ? p : path.join(_path, p)
+  }
+
+  get importDir() {
+    const p = this.config.importDir || DEFAULT_EMOJI_CONFIG.importDir
     return path.isAbsolute(p) ? p : path.join(_path, p)
   }
 
@@ -177,7 +187,10 @@ export class EmojiPackManager {
     return result
   }
 
-  async _addFromBufferInternal(buffer, { source = "manual", autoTag = true, autoEmbed = true } = {}) {
+  async _addFromBufferInternal(buffer, {
+    source = "manual", autoTag = true, autoEmbed = true,
+    skipContentFilter = false, presetTags = null, presetDescription = ""
+  } = {}) {
     this.refreshConfig()
     await this.ensureDirs()
 
@@ -190,7 +203,7 @@ export class EmojiPackManager {
     if (ext === ".bin") return { added: false, reason: "unsupported_format" }
 
     // L0 物理预检查：尺寸 / 纵横比 / 文件大小（零成本，必拦明显非表情包）
-    if (buffer.length > 5 * 1024 * 1024) {
+    if (buffer.length > 10 * 1024 * 1024) {
       return { added: false, reason: "too_large", size: buffer.length }
     }
     if (buffer.length < 1024) {
@@ -223,7 +236,7 @@ export class EmojiPackManager {
       return { added: false, reason: "full" }
     }
 
-    if (this.config.contentFiltration) {
+    if (this.config.contentFiltration && !skipContentFilter) {
       try {
         const verdict = await this.contentFilterWithVLM(buffer, ext)
         if (!verdict.isEmoji) {
@@ -274,6 +287,12 @@ export class EmojiPackManager {
       registeredAt: new Date().toISOString(),
       source,
       isBanned: false
+    }
+
+    // 批量导入预置元数据：文件名解析出的描述/标签，autoTag=false 时即最终元数据
+    if (presetDescription) record.description = String(presetDescription)
+    if (Array.isArray(presetTags) && presetTags.length) {
+      record.tags = presetTags.map(t => String(t).trim()).filter(Boolean)
     }
 
     if (autoTag && this.config.visionTagOnAdd !== false) {
@@ -508,14 +527,16 @@ export class EmojiPackManager {
       logWarn(`维护扫描目录失败: ${err.message}`)
     }
 
-    // 3. 清理无标签无向量的「残废」记录（含磁盘文件）
-    //    仅在启用 VLM 打标时执行，避免误删用户主动关闭打标时的合法无标签项
+    // 3. 清理无标签、无向量、且无描述的「残废」记录（含磁盘文件）
+    //    仅在启用 VLM 打标时执行，避免误删用户主动关闭打标时的合法无标签项；
+    //    description 非空说明是批量导入的用户元数据（embedding 可能只是暂时生成失败），豁免
     if (this.config.visionTagOnAdd !== false) {
       for (let i = items.length - 1; i >= 0; i--) {
         const item = items[i]
         const hasTag = Array.isArray(item.tags) && item.tags.length > 0
         const hasEmbed = Array.isArray(item.embedding) && item.embedding.length > 0
-        if (!hasTag && !hasEmbed) {
+        const hasDesc = typeof item.description === "string" && item.description.trim().length > 0
+        if (!hasTag && !hasEmbed && !hasDesc) {
           const abs = path.join(this.storeDir, path.basename(item.file))
           try { await fsp.unlink(abs) } catch {}
           items.splice(i, 1)
@@ -523,7 +544,7 @@ export class EmojiPackManager {
           changed = true
         }
       }
-      if (report.cleanedUntagged) logInfo(`维护：清理 ${report.cleanedUntagged} 个无标签无向量的残废记录（含磁盘文件）`)
+      if (report.cleanedUntagged) logInfo(`维护：清理 ${report.cleanedUntagged} 个无标签无向量无描述的残废记录（含磁盘文件）`)
     }
 
     if (changed) await this.saveItems(items)
@@ -556,7 +577,7 @@ export class EmojiPackManager {
         const response = await fetch(seg.url, { signal: AbortSignal.timeout(10000) })
         if (!response.ok) continue
         const buffer = Buffer.from(await response.arrayBuffer())
-        if (buffer.length < 1024 || buffer.length > 5 * 1024 * 1024) continue
+        if (buffer.length < 1024 || buffer.length > 10 * 1024 * 1024) continue
         await this.addFromBuffer(buffer, { source: "auto" })
       } catch (err) {
         logWarn(`autoCollect 失败: ${err.message}`)

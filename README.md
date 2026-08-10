@@ -100,6 +100,8 @@ pnpm install
 ### 表情包管理（仅主人）
 ```text
 #表情包导入                           — 引用一条带图消息或自带图，导入到本地表情包库
+#表情包入库                           — 扫描 database/emoji_import 目录批量入库；文件名即元数据：描述文字[tag1,tag2].png（成功/重复删源文件，失败保留）
+#表情包入库 描述[tag1,tag2]           — 引用带图消息或自带图，用参数作元数据单张直接入库（同样跳过 VLM 审查/打标；多图只取第一张）
 #表情包列表 [页码]                    — 分页查看，每条带 8 位 hash、标签、使用次数；含 [封禁]/[缺文件] 标记
 #表情包预览 [hash前缀]                — 预览图片本体 + 元数据；不带参数时引用一张图直接预览该图元数据
 #表情包删除 [hash前缀]                — 物理删除（hash 前缀至少 4 位）；不带参数时引用一张图直接删除该图
@@ -525,6 +527,9 @@ MCP 管理命令：
 | `enabled` | boolean | `false` | **系统主开关**。关闭时 `sendLocalEmojiTool` 不暴露给 LLM、autoCollect 不工作、维护循环不启动 |
 | `dbPath` | string | `plugins/bl-chat-plugin/database/emoji-packs.ndjson` | 元数据 ndjson 文件路径，相对路径相对 Yunzai 根目录 |
 | `storeDir` | string | `plugins/bl-chat-plugin/database/emoji_files` | 表情包图片本体存放目录 |
+| `importDir` | string | `plugins/bl-chat-plugin/database/emoji_import` | 批量导入扫描目录，`emojiSystem.enabled: true` 时自动创建。把改名后的图片丢进来发 `#表情包入库` 即可 |
+
+> **批量入库（`#表情包入库`）**：文件名即元数据，格式 `描述文字[tag1,tag2].png`——tags 可省略，支持全角 `【】` 与 `，`、`、` 分隔，描述截断 300 字，描述与 tags 皆空的文件会被拒绝。批量入库**跳过 VLM 内容审查与打标**（零 VLM 成本，描述/tag 完全由文件名决定），但仍会用描述生成 embedding（需配好 `embeddingAiConfig`），语义召回只认描述，建议务必写描述。成功/重复的源文件会被删除，失败的保留供修正后重跑。注意：库满且 `doReplace: true` 时每张图都会触发一次 LLM 替换决策，批量导入前建议先确认容量。
 
 #### 容量管理
 
@@ -538,7 +543,7 @@ MCP 管理命令：
 |--------|------|--------|------|
 | `autoCollect` | boolean | `false` | **是否自动收集群里图片入库**。默认关，避免广告/截图/自拍混入。开启时建议同时开 `contentFiltration` 过滤 |
 
-> 自动收集的内置过滤：SHA-256 去重、1KB-5MB 大小限制、图片格式校验（jpg/png/gif/webp/bmp）
+> 自动收集的内置过滤：SHA-256 去重、1KB-10MB 大小限制、图片格式校验（jpg/png/gif/webp/bmp）
 
 #### VLM 打标 + 内容审查
 
@@ -592,14 +597,14 @@ MCP 管理命令：
 | `rateLimitMaxPerWindow` | int | `3` | 窗口内最多发送次数。设 0 视为不限 |
 
 > **重要提示**：
-> - 开启表情包系统至少需要配置 `analysisAiConfig`（VLM 打标/审查）
+> - 开启表情包系统至少需要配置 `analysisAiConfig`（VLM 打标/审查；只用 `#表情包入库` 批量导入时可不配）
 > - 启用 `useEmbedding` 还需配置 `embeddingAiConfig`
 > - 启用 `doReplace` 还需配置 `toolsAiConfig`
 > - 默认全套关闭，需手动 `enabled: true` 并在 `oneapi_tools` 加入 `sendLocalEmojiTool`
 
 **工作流程**：
 - **触发**：LLM 在情绪/玩笑/共鸣场景主动调用 `sendLocalEmojiTool`，可选传 `followUpText` 实现"文字 + 表情"组合发送
-- **入库 4 层防御**：L0 sharp 物理预检（尺寸 96-1500px、纵横比 ≤3、1KB-5MB）→ L1 VLM 内容审查（fail-closed）→ L2 VLM 详细打标（40-120 字 description + 3-5 个 ≤4 字情绪 tag）→ L3 tag 黑名单复查（"截图/风景/广告/真人"等 17 词直接 reject）
+- **入库 4 层防御**：L0 sharp 物理预检（尺寸 96-1500px、纵横比 ≤3、1KB-10MB）→ L1 VLM 内容审查（fail-closed）→ L2 VLM 详细打标（40-120 字 description + 3-5 个 ≤4 字情绪 tag）→ L3 tag 黑名单复查（"截图/风景/广告/真人"等 17 词直接 reject）
 - **选图算法（v2）**：L1 embedding 召回（基于 description）+ L2 全库加权兜底；统一公式 `score³ × usageFactor_capped × cooldownPenalty(lastUsedAt)` —— 硬相关性门只让 top-tier 入选，三档冷却（<30min ×0.2、<60min ×0.5、<3h ×0.8）保证长尾轮转
 - **反重复**：按群隔离记忆最近 N 次发过的 hash，仅按 hash 排除（tag 太粗易清空候选池）
 - **软限流**：1 分钟超 3 次返回 `error: 近期发送过频，请改用文字`，LLM 自动改用文字
@@ -619,8 +624,22 @@ MCP 管理命令：
 1. 配置好 `analysisAiConfig`（推荐 Gemini Pro Vision / GPT-4o / Claude Sonnet 等多模态模型）
 2. 改 `config/message.yaml`：`emojiSystem.enabled: true`
 3. `oneapi_tools` 列表追加 `sendLocalEmojiTool`
-4. bot 内引用一张表情包图发 `#表情包导入`，导入 5-10 张作为基础库
+4. bot 内引用一张表情包图发 `#表情包导入`，导入 5-10 张作为基础库（或把改名后的图片放入 `database/emoji_import` 后发 `#表情包入库` 批量导入）
 5. 和 bot 正常对话，让它在合适场景自然调用
+
+**批量导入使用步骤（`#表情包入库`）**：
+1. 在电脑上挑好表情包图片：支持 jpg/jpeg/png/gif/webp/bmp，1KB-10MB，尺寸 96-1500px，纵横比 ≤3
+2. 给每张图改名，文件名即元数据：`描述文字[tag1,tag2].png`
+   - 描述建议 10-40 字，写清"画面 + 情绪 + 使用场景"，例：`无语翻白眼的猫适合吐槽离谱发言[无语,猫猫].gif`。语义召回只认描述，写得越具体选图越准
+   - tags 可省略（`开心到飞起.png` 也合法）；分隔符支持 `,` `，` `、`，括号支持全角 `【】`
+3. 把改名后的图片放入 `plugins/bl-chat-plugin/database/emoji_import/`（启用表情包系统后该目录自动创建；也可先发一遍 `#表情包入库` 查看完整路径和说明）
+4. bot 内发 `#表情包入库`（主人权限），等待合并转发的结果报告
+5. 按报告善后：✅ 成功 / ⚠️ 已存在的源文件已自动删除；❌ 失败的源文件保留，按提示原因（改名/换图）修正后重发 `#表情包入库` 即可只重跑失败部分；行尾提示 embedding 生成失败时，检查 `embeddingAiConfig` 后用 `#表情包删除` 删掉该图重新入库
+6. `#表情包预览 <hash前缀>` 抽查描述/tags/embedding，`#表情包统计` 看整体覆盖情况
+
+**单张入库（QQ 不让保存表情图片时）**：群里看到想收的表情，引用那条消息发 `#表情包入库 描述文字[tag1,tag2]` 即可直接入库，无需经过文件夹；元数据语法与文件名一致（tags 可省略）。引用/自带多张图时只取第一张。
+
+> 批量入库全程不调 VLM——只走这条路径时可以不配 `analysisAiConfig`，但 `embeddingAiConfig` 建议必配，否则图片无法被语义召回、只能随机兜底。
 
 ---
 
