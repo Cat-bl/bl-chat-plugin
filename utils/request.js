@@ -210,7 +210,8 @@ export default new class {
 
   async _reques(options) {
     try {
-      let res = await fetch(options.url, options)
+      const signal = options.signal ?? AbortSignal.timeout(options.timeout ?? 30000)
+      let res = await fetch(options.url, { ...options, signal })
       res = await this._handleRes(res, options)
       return res
     } catch (err) {
@@ -252,11 +253,14 @@ export default new class {
   }
 }()
 function matchWithWildcards(pattern, text) {
-  const regexPattern =
-    pattern
-      .replace(/\./g, "\\.")
-      .replace(/\*/g, ".*")
-      .replace(/\?/g, ".")
-  const regex = new RegExp(regexPattern)
-  return regex.test(text)
+  const parts = pattern.split("*")
+  if (parts.length === 1) return pattern === text
+  if (!text.startsWith(parts[0])) return false
+  let idx = parts[0].length
+  for (let i = 1; i < parts.length; i++) {
+    const found = text.indexOf(parts[i], idx)
+    if (found === -1) return false
+    idx = found + parts[i].length
+  }
+  return i === parts.length && (parts[parts.length - 1] === "" || idx === text.length)
 }
