@@ -6,6 +6,7 @@ import {
     resolveImageEndpoint,
     callImageGenApi,
     extractImageUrl,
+    normalizeImageSize,
 } from '../../utils/api/imageGeneration.js';
 import fs from "fs";
 import YAML from "yaml";
@@ -29,6 +30,10 @@ export class GoogleImageEditTool extends AbstractTool {
                     type: 'array',
                     description: '用户提供的图片链接数组，需保留原始URL完整性。QQ头像格式："https://q1.qlogo.cn/g?b=qq&nk=用户QQ号&s=640"',
                     items: { type: 'string' }
+                },
+                size: {
+                    type: 'string',
+                    description: '生成图片的尺寸或比例，例如 1024x1024、1536x864、16:9、9:16、4:3、1:1、横图、竖图、方图',
                 }
             },
             required: ['prompt', 'images'],
@@ -39,7 +44,7 @@ export class GoogleImageEditTool extends AbstractTool {
     async func(opts, e) {
         try {
             const config = this.loadConfig();
-            const { prompt } = opts;
+            const { prompt, size: rawSize } = opts;
             const { imageEditApiUrl, imageEditApiKey, imageEditApiModel } = config.imageEditAiConfig || {};
             const apiUrl = imageEditApiUrl || 'https://api.openai.com/v1/chat/completions';
             const apiModel = imageEditApiModel || "gemini-3-pro-image-preview";
@@ -57,7 +62,11 @@ export class GoogleImageEditTool extends AbstractTool {
 
             if (endpoint.type === 'chat') {
                 // chat/completions 模式：多模态 messages 走 callAI（保持原行为）
-                const content = await this.buildImageMessages(prompt, images);
+                const sizeHint = normalizeImageSize(rawSize)
+                const content = await this.buildImageMessages(
+                    sizeHint === normalizeImageSize() ? prompt : `${prompt}\n[图片尺寸: ${sizeHint}]`,
+                    images
+                );
                 const result = await callAI(
                     { url: apiUrl, model: apiModel, apikey: apiKey },
                     [{ role: "user", content }],
@@ -79,7 +88,7 @@ export class GoogleImageEditTool extends AbstractTool {
                 processedUrl = extractImageUrl(imageUrl);
             } else {
                 // responses / images(edits) 模式
-                processedUrl = await callImageGenApi(endpoint, prompt, images, apiModel, apiKey);
+                processedUrl = await callImageGenApi(endpoint, prompt, images, apiModel, apiKey, rawSize);
             }
 
             if (processedUrl) {

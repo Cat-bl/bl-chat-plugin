@@ -18,6 +18,31 @@ import { getBase64Image } from '../fileUtils.js'
 export const DEFAULT_IMAGE_SIZE = '1024x1024'
 
 /**
+ * 把用户/模型传入的尺寸或比例归一化成 API 可用尺寸
+ * @param {string} size
+ * @returns {string}
+ */
+export function normalizeImageSize(size) {
+  if (!size) return DEFAULT_IMAGE_SIZE
+  const s = String(size).trim().toLowerCase().replace(/[x×*]/g, 'x')
+  if (s === 'auto') return s
+  const alias = {
+    '1:1': '1024x1024',
+    '16:9': '1536x864',
+    '9:16': '864x1536',
+    '4:3': '1152x864',
+    '3:4': '864x1152',
+    '横图': '1536x864',
+    '竖图': '864x1536',
+    '方图': '1024x1024',
+  }
+  if (alias[s]) return alias[s]
+  const wh = s.match(/^(\d{2,5})x(\d{2,5})$/)
+  if (wh) return `${wh[1]}x${wh[2]}`
+  return DEFAULT_IMAGE_SIZE
+}
+
+/**
  * 根据 URL 后缀识别 endpoint 类型（行为等价于手办化.js#resolveEndpoint）
  *
  * 注意：`/v1/messages`（Anthropic）归为 chat 类型，由调用方走 callAI
@@ -210,11 +235,12 @@ export async function imagesToBase64(images) {
  * @param {string} key API key
  * @returns {Promise<string|null>} 图片 URL（http(s) 或 base64://...），未找到返回 null
  */
-export async function callImageGenApi(endpoint, prompt, images, model, key) {
+export async function callImageGenApi(endpoint, prompt, images, model, key, size = DEFAULT_IMAGE_SIZE) {
   const base64Images = await imagesToBase64(images)
+  const targetSize = normalizeImageSize(size)
 
   if (endpoint.type === 'responses') {
-    const payload = buildResponsesPayload(prompt, base64Images, model, DEFAULT_IMAGE_SIZE)
+    const payload = buildResponsesPayload(prompt, base64Images, model, targetSize)
     const data = await postImageApi(
       endpoint.url,
       { 'Content-Type': 'application/json' },
@@ -232,7 +258,7 @@ export async function callImageGenApi(endpoint, prompt, images, model, key) {
     prompt,
     base64Images,
     model,
-    DEFAULT_IMAGE_SIZE,
+    targetSize,
   )
   const data = await postImageApi(endpoint.url, headers, body, key)
   const url = parseImagesApiResult(data)

@@ -6,6 +6,7 @@ import {
   resolveImageEndpoint,
   callImageGenApi,
   extractImageUrl,
+  normalizeImageSize,
 } from '../../utils/api/imageGeneration.js';
 import fs from "fs";
 import YAML from "yaml";
@@ -31,6 +32,10 @@ export class BananaTool extends AbstractTool {
           type: 'array',
           description: '用户提供的图片链接数组，需保留原始URL完整性',
           items: { type: 'string' }
+        },
+        size: {
+          type: 'string',
+          description: '生成图片的尺寸或比例，例如 1024x1024、1536x864、16:9、9:16、4:3、1:1、横图、竖图、方图',
         }
       },
       required: ['prompt'],
@@ -40,7 +45,7 @@ export class BananaTool extends AbstractTool {
 
   async func(opts, e) {
     const config = this.loadConfig();
-    const { prompt, images: rawImages } = opts;
+    const { prompt, images: rawImages, size: rawSize } = opts;
 
     if (!prompt) return "错误：绘图提示词（prompt）不能为空。";
 
@@ -58,7 +63,11 @@ export class BananaTool extends AbstractTool {
     try {
       if (endpoint.type === 'chat') {
         // chat/completions 模式：多模态 messages 走 callAI（保持原行为）
-        const imgurls = await this.buildImageMessages(prompt, images);
+        const sizeHint = normalizeImageSize(rawSize)
+        const imgurls = await this.buildImageMessages(
+          sizeHint === normalizeImageSize() ? prompt : `${prompt}\n[图片尺寸: ${sizeHint}]`,
+          images
+        );
         const result = await callAI(
           { url: finalUrl, model: finalModel, apikey: finalKey },
           [{ role: "user", content: imgurls }],
@@ -79,7 +88,7 @@ export class BananaTool extends AbstractTool {
         processedUrl = extractImageUrl(imageUrl);
       } else {
         // responses / images(edits|generations) 模式
-        processedUrl = await callImageGenApi(endpoint, prompt, images, finalModel, finalKey);
+        processedUrl = await callImageGenApi(endpoint, prompt, images, finalModel, finalKey, rawSize);
       }
 
       if (processedUrl) {
