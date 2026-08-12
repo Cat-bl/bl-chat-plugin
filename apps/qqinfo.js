@@ -26,20 +26,39 @@ export class QQinfo extends plugin {
         if (mid == "" || !/^\d+$/.test(mid)) {
             return e.reply("请输入qq号或者直接艾特再发送命令", true)
         }
-        // 获取用户
-        const KEY_DATA = await bot.sendApi('get_credentials', {
-            domain: "vip.qq.com",
-        })
-        // logger.info(KEY_DATA.data.cookies, 666)
 
-        const skeyRegex = /skey=([^;]+)/.exec(KEY_DATA.data.cookies)
-        const pSkeyRegex = /p_skey=([^;]+)/.exec(KEY_DATA.data.cookies)
-        const uinRegex = /uin=([^;]+)/.exec(KEY_DATA.data.cookies)
+        // 判断协议端类型：NapCat 用 get_credentials，LLBot 等 OneBot 11 标准用 get_cookies
+        const isNapCat = bot.version?.name?.toLowerCase().includes('napcat') ||
+                         bot.adapter?.name?.toLowerCase().includes('napcat')
+        const apiName = isNapCat ? 'get_credentials' : 'get_cookies'
 
-        const skey = skeyRegex?.[1] // 输出 @sFOi60Ji4
-        const p_skey = pSkeyRegex?.[1] // 输出 RLsR0kc5JtYiGuHxndsBYRQh3ugVWBVvdMstgQXrEdc_
-        const url = `http://jiuli.xiaoapi.cn/i/qq/qq_level.php?qq=${mid}&return=json&uin=${uinRegex}&skey=${skey}&pskey=${p_skey}`
-        const DATA_JSON = await fetch(url).then(res => res.json())
+        let KEY_DATA
+        try {
+            KEY_DATA = await bot.sendApi(apiName, { domain: "vip.qq.com" })
+        } catch (err) {
+            return e.reply(`获取 QQ 凭证失败：${apiName} 接口调用异常`, true)
+        }
+
+        const cookies = (KEY_DATA?.data ?? KEY_DATA)?.cookies || ""
+        if (!cookies) {
+            return e.reply("获取 QQ 凭证失败：返回数据为空", true)
+        }
+
+        // p_skey 在部分协议端返回为 skey 同名前缀（p_skey / pskey），uin 可能带 o 前缀
+        // 注意：必须先匹配 p_skey 再匹配 skey，否则 skey 正则会误匹配到 "p_skey" 里的 "skey"
+        const p_skey = /(?:^|;)\s*p_?skey=([^;]+)/.exec(cookies)?.[1]
+        const skey = /(?:^|;)\s*skey=([^;]+)/.exec(cookies)?.[1]
+        const uin = /(?:^|;)\s*uin=o?0*([^;]+)/.exec(cookies)?.[1] || bot.uin
+
+        if (!skey || !p_skey) {
+            return e.reply("获取 QQ 凭证不完整（缺少 skey/p_skey），该协议端可能不支持 vip.qq.com 域名的 Cookie", true)
+        }
+
+        const url = `http://jiuli.xiaoapi.cn/i/qq/qq_level.php?qq=${mid}&return=json&uin=${uin}&skey=${skey}&pskey=${p_skey}`
+        const DATA_JSON = await fetch(url, { signal: AbortSignal.timeout(15000) }).then(res => res.json())
+        if (DATA_JSON?.code === -1) {
+            return e.reply(`查询失败：${DATA_JSON.msg || "接口返回异常"}`, true)
+        }
 
         DATA_JSON.cardTitle = '信息查询成功！！！'
         logger.info(DATA_JSON, 88)
