@@ -76,13 +76,31 @@ export class QQApi {
       //   }),
       // }).then(res => res.json())
 
-      const KEY_DATA = await Bot.sendApi('get_credentials', {
-        "domain": "qzone.qq.com",
-      })
-      // logger.info(KEY_DATA.data.cookies, 666)
+      // 凭证接口：NapCat 名 get_credentials，LLBot 等 OneBot 11 标准实现名 get_cookies
+      // （后者只返回 cookies，csrf_token 需另调 get_csrf_token）
+      let data = null
+      for (const action of ['get_credentials', 'get_cookies']) {
+        try {
+          const res = await Bot.sendApi(action, { "domain": "qzone.qq.com" })
+          const payload = res?.data ?? res
+          if (payload?.cookies) { data = payload; break }
+        } catch (err) {
+          logger?.debug?.(`[QQApi] ${action} 获取失败: ${err.message}`)
+        }
+      }
+      if (!data) return undefined
+
       // NapCat 返回 token 字段，LLBot 等 OneBot 11 标准实现返回 csrf_token 字段，两者取值算法相同
-      const data = KEY_DATA.data
-      return { ...data, token: data.token ?? data.csrf_token }
+      let token = data.token ?? data.csrf_token
+      if (token === undefined) {
+        try {
+          const res = await Bot.sendApi('get_csrf_token', {})
+          token = (res?.data ?? res)?.token
+        } catch (err) {
+          logger?.debug?.(`[QQApi] get_csrf_token 获取失败: ${err.message}`)
+        }
+      }
+      return { ...data, token }
 
     } catch (error) {
 
