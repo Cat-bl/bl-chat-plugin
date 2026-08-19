@@ -182,6 +182,7 @@ export const smartGateMethods = {
         inFlight: false,
         needsRerun: false,
         rerunEvent: null,
+        rerunContextVersion: 0,
         queuedWhileInFlight: 0,
         queuedForceGateCheck: false,
         waitTimers: new Map(),
@@ -189,6 +190,9 @@ export const smartGateMethods = {
         groupContextVersion: 0,
         userContextVersions: new Map(),
         latestIncomingEvent: null,
+        // 同一条消息可能被适配器重复投递；在进入 inFlight 排队逻辑前先去重。
+        // 这是接收态缓存，和 completedEvents 分开，避免重复事件在首轮尚未完成时被排成重跑。
+        receivedEvents: new CompletedEventCache(),
         completedEvents: new CompletedEventCache(),
         // 拟人化重构新增字段
         conversationPhase: 'cold',        // 'cold' | 'focus' | 'fading'
@@ -216,12 +220,32 @@ export const smartGateMethods = {
     const state = this.getSmartState(groupId)
     // 记录该群最新消息时间戳给 applyReplyDebounce 用（仅 smart 模式需要，避免 strict 模式持续累积内存）
     const isSyntheticSmartEvent = e?._smartWaitRerun || e?._smartQueuedRerun || e?._proactiveReply
-    if (!isSyntheticSmartEvent && !e?._smartOriginKey) {
+    const hasRealMessageId = e?.message_id !== undefined && e?.message_id !== null &&
+      String(e.message_id) !== ''
+    if (!isSyntheticSmartEvent && !hasRealMessageId && !e?._smartOriginKey) {
       try {
         e._smartOriginKey = `${groupId}:event:${(state.groupContextVersion || 0) + 1}`
       } catch {}
     }
     const eventKey = getSmartEventKey(e)
+
+    // 优先使用协议提供的 message_id。真实事件会被 Yunzai/适配器重复投递，
+    // 或在 smart 的并发/排队路径中再次到达；无论来源如何，同一条用户消息只允许进入一次。
+    // 每次调用可能拿到不同的 JS 事件对象，不能依赖对象上的 _smartOriginKey 去重。
+    const incomingMessageId = e?.message_id
+    const incomingSelfId = e?.self_id ?? e?.bot?.uin ?? ''
+    const incomingEventKey = !isSyntheticSmartEvent && incomingMessageId !== undefined &&
+      incomingMessageId !== null && String(incomingMessageId) !== ''
+      ? `${incomingSelfId}:${groupId}:message:${incomingMessageId}`
+      : ''
+    if (!isSyntheticSmartEvent && incomingEventKey && state.receivedEvents.has(incomingEventKey)) {
+      logger.info(`[Smart去重] group=${groupId} message_id=${incomingMessageId} 同一用户消息已进入过 smart 流程，跳过重复触发`)
+      return false
+    }
+    if (!isSyntheticSmartEvent && incomingEventKey) {
+      state.receivedEvents.add(incomingEventKey)
+    }
+
     if (isSyntheticSmartEvent && state.completedEvents.has(eventKey)) {
       logger.info(`[Smart去重] group=${groupId} message_id=${e.message_id} 已完成回复，跳过合成事件重复处理`)
       return false
@@ -229,6 +253,7 @@ export const smartGateMethods = {
     if (!isSyntheticSmartEvent) {
       lastIncomingMsgAt.set(groupId, Date.now())
       state.groupContextVersion = (state.groupContextVersion || 0) + 1
+      try { e._smartContextVersion = state.groupContextVersion } catch {}
       const contextUserKey = String(e.user_id || '')
       state.userContextVersions.set(contextUserKey, (state.userContextVersions.get(contextUserKey) || 0) + 1)
       state.latestIncomingEvent = e
@@ -242,6 +267,10 @@ export const smartGateMethods = {
     // 必须在任何 await 之前同步检查并 set，防止 await checkTriggers 期间多个调用并发通过
     if (state.inFlight) {
       state.queuedWhileInFlight = (state.queuedWhileInFlight || 0) + 1
+      state.rerunContextVersion = Math.max(
+        Number(state.rerunContextVersion) || 0,
+        Number(e?._smartContextVersion) || Number(state.groupContextVersion) || 0
+      )
       state.lastMsgAt = Date.now()
       state.needsRerun = true
       if (e?._smartWaitRerun) state.queuedForceGateCheck = true
@@ -471,15 +500,33 @@ export const smartGateMethods = {
     } finally {
       state.inFlight = false
       if (state.needsRerun) {
-        const rerunEvent = state.rerunEvent || e
-        const queuedForceGateCheck = !!state.queuedForceGateCheck
-        state.needsRerun = false
-        state.rerunEvent = null
-        state.queuedForceGateCheck = false
-        const wrappedRerun = Object.create(rerunEvent)
-        wrappedRerun._smartQueuedRerun = true
-        if (queuedForceGateCheck) wrappedRerun._smartQueuedGateCheck = true
-        this.handleRandomReplySmart(wrappedRerun).catch(err => logger.error('[TimingGate] 重跑失败:', err))
+        const rerunContextVersion = Number(state.rerunContextVersion) || 0
+        const handledContextVersion = Number(e?._smartHistoryContextVersion) || 0
+        // @/新消息在前一轮读取群历史前到达时，前一轮的模型上下文已经包含这些消息。
+        // 若前一轮也确实产出了回复，就不能再把同一批上下文排成第二轮；
+        // 若消息在历史快照之后才到达，则版本更大，仍保留重跑以保证 @ 必回。
+        if (e?._conversationProducedOutput === true && rerunContextVersion > 0 &&
+            handledContextVersion >= rerunContextVersion) {
+          logger.info(`[Smart合并] group=${groupId} 当前回复已覆盖排队消息 context=${handledContextVersion}/${rerunContextVersion}，取消重复重跑`)
+          state.needsRerun = false
+          state.rerunEvent = null
+          state.rerunContextVersion = 0
+          state.queuedWhileInFlight = 0
+          state.queuedForceGateCheck = false
+          state.forceContinue = false
+          state.forceGateCheck = false
+        } else {
+          const rerunEvent = state.rerunEvent || e
+          const queuedForceGateCheck = !!state.queuedForceGateCheck
+          state.needsRerun = false
+          state.rerunEvent = null
+          state.rerunContextVersion = 0
+          state.queuedForceGateCheck = false
+          const wrappedRerun = Object.create(rerunEvent)
+          wrappedRerun._smartQueuedRerun = true
+          if (queuedForceGateCheck) wrappedRerun._smartQueuedGateCheck = true
+          this.handleRandomReplySmart(wrappedRerun).catch(err => logger.error('[TimingGate] 重跑失败:', err))
+        }
       }
     }
   },

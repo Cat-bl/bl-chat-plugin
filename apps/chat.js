@@ -504,6 +504,12 @@ export class ChatPlugin extends plugin {
       const session = this.getOrCreateSession(sessionId, this.tools)
       session.taskContext = taskContext
 
+      // smart 模式下记录本轮默认只覆盖到自身事件；读取群历史快照后会提升到当时的
+      // groupContextVersion，供 smart Gate 判断排队的 @/新消息是否已经被本轮回复覆盖。
+      if (String(this.config.chatTriggerMode || 'strict').toLowerCase() === 'smart') {
+        try { e._smartHistoryContextVersion = Number(e?._smartContextVersion) || 0 } catch {}
+      }
+
       let groupUserMessages = session.groupUserMessages
 
       try {
@@ -617,7 +623,16 @@ export class ChatPlugin extends plugin {
         })
         // 获取历史记录
         if (this.config.groupHistory) {
+          // 在发起历史读取前固定版本。读取期间才到达的新消息不保证已包含在本次
+          // Redis 快照里，必须留给 smart 排队重跑，不能用读取完成后的更高版本冒充已覆盖。
+          const smartHistoryContextVersion = String(this.config.chatTriggerMode || 'strict').toLowerCase() === 'smart'
+            ? this.getSmartState(groupId).groupContextVersion || 0
+            : 0
           const chatHistory = await this.messageManager.getMessages(e.message_type, e.message_type === "group" ? e.group_id : e.user_id)
+
+          if (smartHistoryContextVersion > 0) {
+            try { e._smartHistoryContextVersion = smartHistoryContextVersion } catch {}
+          }
 
           if (chatHistory?.length) {
             await e.bot.pickGroup(groupId).getMemberMap()

@@ -329,6 +329,182 @@ test("smart：入口锁占用时让步并登记排队重跑", async () => {
   state.rerunEvent = null
 })
 
+test("smart：同一 message_id 的重复投递只处理一次", async () => {
+  const bot = makeBot({ config: { smartTrigger: { talkValue: 1 } } })
+  bot.gateResult = { decision: "continue" }
+  const groupId = newGroupId()
+  const first = makeEvent(groupId, { msg: "@机器人 你好" })
+  first.message_id = "duplicate-message-1"
+  const second = makeEvent(groupId, { msg: "@机器人 你好" })
+  second.message_id = "duplicate-message-1"
+
+  assert.equal(await bot.handleRandomReplySmart(first), true)
+  assert.equal(await bot.handleRandomReplySmart(second), false)
+  assert.equal(bot.__calls.gate.length, 1)
+  assert.equal(bot.__calls.handleTool.length, 1)
+})
+
+test("smart：不同机器人账号收到同一 message_id 时不会互相误去重", async () => {
+  const bot = makeBot({ config: { smartTrigger: { talkValue: 1 } } })
+  bot.gateResult = { decision: "continue" }
+  const groupId = newGroupId()
+  const first = makeEvent(groupId, { msg: "@机器人A 你好" })
+  first.self_id = "bot-a"
+  first.message_id = "shared-message-id"
+  const second = makeEvent(groupId, { msg: "@机器人B 你好" })
+  second.self_id = "bot-b"
+  second.message_id = "shared-message-id"
+
+  assert.equal(await bot.handleRandomReplySmart(first), true)
+  assert.equal(await bot.handleRandomReplySmart(second), true)
+  assert.equal(bot.__calls.gate.length, 2)
+  assert.equal(bot.__calls.handleTool.length, 2)
+})
+
+test("smart：首轮仍在处理中时，同一 message_id 不会被排成第二轮", async () => {
+  const bot = makeBot({ config: { smartTrigger: { talkValue: 1 } } })
+  bot.gateResult = { decision: "continue" }
+  let releaseHandleTool
+  const handleToolBlocked = new Promise(resolve => { releaseHandleTool = resolve })
+  bot.handleTool = async e => {
+    bot.__calls.handleTool.push(e)
+    await handleToolBlocked
+    return true
+  }
+  const groupId = newGroupId()
+  const first = makeEvent(groupId, { msg: "你知道我刚才说的果汁值是什么？" })
+  first.message_id = "same-user-message"
+  const duplicate = makeEvent(groupId, { msg: "你知道我刚才说的果汁值是什么？" })
+  duplicate.message_id = "same-user-message"
+
+  const firstRun = bot.handleRandomReplySmart(first)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(await bot.handleRandomReplySmart(duplicate), false)
+  const state = bot.getSmartState(groupId)
+  assert.equal(state.needsRerun, false)
+  assert.equal(state.queuedWhileInFlight, 0)
+  releaseHandleTool()
+  assert.equal(await firstRun, true)
+  assert.equal(bot.__calls.handleTool.length, 1)
+})
+
+test("smart：前一轮回复已读取到排队的 @ 消息时取消第二轮", async () => {
+  const bot = makeBot({ config: { smartTrigger: { talkValue: 1 } } })
+  bot.gateResult = { decision: "continue" }
+  let enteredHandleTool
+  const handleToolEntered = new Promise(resolve => { enteredHandleTool = resolve })
+  let releaseHistorySnapshot
+  const historySnapshotReady = new Promise(resolve => { releaseHistorySnapshot = resolve })
+  bot.handleTool = async e => {
+    bot.__calls.handleTool.push(e)
+    enteredHandleTool()
+    await historySnapshotReady
+    e._smartHistoryContextVersion = bot.getSmartState(e.group_id).groupContextVersion
+    e._conversationProducedOutput = true
+    return true
+  }
+  bot.checkTriggers = e => e.msg?.includes("果汁值")
+  const groupId = newGroupId()
+  const oldMessage = makeEvent(groupId, { msg: "前一条普通消息" })
+  oldMessage.message_id = "old-message"
+  const atMessage = makeEvent(groupId, { msg: "你知道我刚才说的果汁值是什么？" })
+  atMessage.message_id = "at-message"
+
+  const firstRun = bot.handleRandomReplySmart(oldMessage)
+  await handleToolEntered
+  assert.equal(await bot.handleRandomReplySmart(atMessage), false)
+  releaseHistorySnapshot()
+  assert.equal(await firstRun, true)
+  await new Promise(resolve => setImmediate(resolve))
+
+  const state = bot.getSmartState(groupId)
+  assert.equal(bot.__calls.handleTool.length, 1)
+  assert.equal(state.needsRerun, false)
+  assert.equal(state.forceContinue, false)
+})
+
+test("smart：@ 消息在前一轮历史快照之后到达时仍保留必回第二轮", async () => {
+  const bot = makeBot({ config: { smartTrigger: { talkValue: 1 } } })
+  bot.gateResult = { decision: "continue" }
+  bot.checkTriggers = e => e.msg?.includes("果汁值")
+  let enteredFirstHandleTool
+  const firstHandleToolEntered = new Promise(resolve => { enteredFirstHandleTool = resolve })
+  let releaseFirstHandleTool
+  const firstHandleToolBlocked = new Promise(resolve => { releaseFirstHandleTool = resolve })
+  bot.handleTool = async e => {
+    bot.__calls.handleTool.push(e)
+    if (bot.__calls.handleTool.length === 1) {
+      e._smartHistoryContextVersion = Number(e._smartContextVersion) || 0
+      enteredFirstHandleTool()
+      await firstHandleToolBlocked
+    }
+    e._conversationProducedOutput = true
+    return true
+  }
+  const groupId = newGroupId()
+  const oldMessage = makeEvent(groupId, { msg: "前一条普通消息" })
+  oldMessage.message_id = "snapshot-old-message"
+  const atMessage = makeEvent(groupId, { msg: "你知道我刚才说的果汁值是什么？" })
+  atMessage.message_id = "snapshot-at-message"
+
+  const firstRun = bot.handleRandomReplySmart(oldMessage)
+  await firstHandleToolEntered
+  assert.equal(await bot.handleRandomReplySmart(atMessage), false)
+  releaseFirstHandleTool()
+  assert.equal(await firstRun, true)
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(bot.__calls.handleTool.length, 2)
+})
+
+test("smart：多条排队消息中历史只覆盖前半段时保留最新 @ 的必回重跑", async () => {
+  const bot = makeBot({ config: { smartTrigger: { talkValue: 1 } } })
+  bot.gateResult = { decision: "continue" }
+  bot.checkTriggers = e => e.msg?.includes("果汁值")
+  let enteredFirstHandleTool
+  const firstHandleToolEntered = new Promise(resolve => { enteredFirstHandleTool = resolve })
+  let allowHistorySnapshot
+  const historySnapshotAllowed = new Promise(resolve => { allowHistorySnapshot = resolve })
+  let historySnapshotTaken
+  const historySnapshotReady = new Promise(resolve => { historySnapshotTaken = resolve })
+  let releaseFirstHandleTool
+  const firstHandleToolBlocked = new Promise(resolve => { releaseFirstHandleTool = resolve })
+  bot.handleTool = async e => {
+    bot.__calls.handleTool.push(e)
+    if (bot.__calls.handleTool.length === 1) {
+      enteredFirstHandleTool()
+      await historySnapshotAllowed
+      e._smartHistoryContextVersion = bot.getSmartState(e.group_id).groupContextVersion
+      historySnapshotTaken()
+      await firstHandleToolBlocked
+    }
+    e._conversationProducedOutput = true
+    return true
+  }
+  const groupId = newGroupId()
+  const oldMessage = makeEvent(groupId, { msg: "前一条普通消息" })
+  oldMessage.message_id = "partial-old-message"
+  const firstAtMessage = makeEvent(groupId, { msg: "第一个果汁值问题" })
+  firstAtMessage.message_id = "partial-at-before-snapshot"
+  const secondAtMessage = makeEvent(groupId, { msg: "第二个果汁值问题" })
+  secondAtMessage.message_id = "partial-at-after-snapshot"
+
+  const firstRun = bot.handleRandomReplySmart(oldMessage)
+  await firstHandleToolEntered
+  assert.equal(await bot.handleRandomReplySmart(firstAtMessage), false)
+  allowHistorySnapshot()
+  await historySnapshotReady
+  assert.equal(await bot.handleRandomReplySmart(secondAtMessage), false)
+  releaseFirstHandleTool()
+  assert.equal(await firstRun, true)
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(bot.__calls.handleTool.length, 2)
+  assert.equal(bot.__calls.handleTool[1].message_id, "partial-at-after-snapshot")
+})
+
 test("smart：Gate wait 决策 → 排续话定时器且秒数被夹到上限", async () => {
   const bot = makeBot({ config: { smartTrigger: { talkValue: 1 } } })
   bot.gateResult = { decision: "wait", wait_seconds: 300 }
@@ -383,6 +559,7 @@ test("getSmartState：同群返回同一状态对象，新状态字段齐全", (
   assert.equal(state.pendingCount, 0)
   assert.equal(state.conversationPhase, "cold")
   assert.ok(state.waitTimers instanceof Map)
+  assert.ok(state.receivedEvents)
   assert.ok(state.completedEvents)
 })
 
